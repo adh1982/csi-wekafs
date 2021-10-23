@@ -1,0 +1,12 @@
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: pvc-api-endpoints-with-trailing-line
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: storageclass-api-endpoints-with-trailing-line
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 1Gi

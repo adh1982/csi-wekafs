@@ -1,0 +1,12 @@
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: pvc-api-valid
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: storageclass-api-valid
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 1Gi

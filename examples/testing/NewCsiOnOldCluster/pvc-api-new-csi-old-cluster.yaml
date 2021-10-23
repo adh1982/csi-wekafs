@@ -1,0 +1,12 @@
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: pvc-api-new-csi-old-cluster
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: storageclass-api-new-csi-old-cluster
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 1Gi
