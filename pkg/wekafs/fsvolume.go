@@ -212,15 +212,14 @@ func (v FsVolume) Exists() (bool, error) {
 func (v FsVolume) createFilesystem(capacity int64) error {
 	fs, err := v.getObject()
 	if err != nil {
-		switch t := err.(type) {
-		case apiclient.ApiNotFoundError:
-			glog.V(3).Infoln("Filesystem", v.Filesystem, "not found, creating")
-
-		default:
-			return status.Error(codes.Internal, t.Error())
-		}
+		return err
+	}
+	if fs != nil {
+		// return fs for idempotence
+		return nil
 	}
 
+	glog.V(3).Infoln("Filesystem", v.Filesystem, "not found, creating")
 	if v.filesystemGroupName == "" {
 		return status.Error(codes.InvalidArgument, "Filesystem group name not specified")
 	}
@@ -272,7 +271,7 @@ func (v FsVolume) Create(capacity int64, params *map[string]string) error {
 	}
 
 	if err := v.createFilesystem(capacity); err != nil {
-		glog.Errorf("Failed to create filesystem %s", v.Filesystem)
+		glog.Errorf("Failed to create filesystem %s: %s", v.Filesystem, err.Error())
 		return err
 	}
 	glog.V(3).Infof("Created volume %s in: %v", v.GetId(), v.Filesystem)
