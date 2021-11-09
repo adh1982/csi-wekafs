@@ -228,8 +228,6 @@ func (v FsVolume) Create(capacity int64, params *map[string]string) error {
 		return nil
 	}
 
-	glog.V(3).Infoln("Filesystem", v.Filesystem, "not found, creating:", v.String())
-
 	glog.Infoln("Received the following request params:", createKeyValuePairs(*params))
 	if params == nil {
 		return errors.New("failed to update filesystem params from request params")
@@ -253,11 +251,10 @@ func (v FsVolume) Create(capacity int64, params *map[string]string) error {
 		}
 
 	}
-
-	glog.Infoln("Filesystem object after update:", v)
+	glog.V(3).Infoln("Filesystem", v.Filesystem, "not found, creating:", v.String())
 
 	fsc := &apiclient.FileSystemCreateRequest{
-		Name:          v.GetId(),
+		Name:          v.Filesystem,
 		GroupName:     v.filesystemGroupName,
 		TotalCapacity: capacity,
 		SsdCapacity:   v.getSsdCapacity(capacity),

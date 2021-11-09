@@ -41,6 +41,11 @@ func createVolumeIdFromRequest(req *csi.CreateVolumeRequest, dynamicVolPath stri
 
 	case string(VolumeTypeFsV1):
 		filesystemName := GetFSNameFromRequest(req)
+		if filesystemName == "" {
+			asciiPart := getAsciiPart(name, 20)
+			hash := getStringSha1(name)[0:11]
+			filesystemName = asciiPart + "-" + hash
+		}
 		volId = filepath.Join(volType, filesystemName)
 		return volId, nil
 
@@ -65,13 +70,7 @@ func GetFSNameFromRequest(req *csi.CreateVolumeRequest) string {
 			return filesystemName
 		}
 	}
-
-	if val, ok := req.GetParameters()["volumeType"]; ok {
-		if val == string(VolumeTypeFsV1) {
-			return "aaaa" // TODO: function that derives the filesystem name from volumeID
-		}
-	}
-	return defaultFilesystemName
+	return ""
 }
 
 func GetFSName(volumeID string) string {
