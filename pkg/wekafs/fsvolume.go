@@ -169,6 +169,11 @@ func (v FsVolume) Mount(xattr bool) (error, UnmountFunc) {
 	return nil, func() {}
 }
 
+func (v FsVolume) String() string {
+	return fmt.Sprintln("name:", v.Filesystem, ", filesystemGroupName:", v.filesystemGroupName,
+		"ID:", v.GetId(), "volumeType:", v.GetType(), "ssdCapacityPercent:", v.ssdCapacityPercent)
+}
+
 func (v FsVolume) Unmount(xattr bool) error {
 	var err error
 	if xattr {
@@ -216,6 +221,7 @@ func (v FsVolume) updateValuesFromParams(params *map[string]string) error {
 	}
 	if val, ok := (*params)["filesystemGroupName"]; ok {
 		v.filesystemGroupName = val
+		glog.V(5).Infoln("Set filesystemGroupName for %s", v.String())
 	}
 	if val, ok := (*params)["ssdCapacityPercent"]; ok {
 		ssdPercent, err := strconv.Atoi(val)
@@ -227,6 +233,7 @@ func (v FsVolume) updateValuesFromParams(params *map[string]string) error {
 		// default value
 		v.ssdCapacityPercent = 100
 	}
+	glog.Infoln("Filesystem object after update:", v)
 	return nil
 }
 
