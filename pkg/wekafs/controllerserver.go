@@ -32,9 +32,8 @@ import (
 )
 
 const (
-	deviceID              = "deviceID"
-	defaultFilesystemName = "default"
-	maxVolumeIdLength     = 1920
+	deviceID          = "deviceID"
+	maxVolumeIdLength = 1920
 )
 
 type controllerServer struct {
