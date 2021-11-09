@@ -209,37 +209,6 @@ func (v FsVolume) Exists() (bool, error) {
 	return true, nil
 }
 
-func (v FsVolume) createFilesystem(capacity int64) error {
-	fs, err := v.getObject()
-	if err != nil {
-		return err
-	}
-	if fs != nil {
-		// return fs for idempotence
-		return nil
-	}
-
-	glog.V(3).Infoln("Filesystem", v.Filesystem, "not found, creating")
-	if v.filesystemGroupName == "" {
-		return status.Error(codes.InvalidArgument, "Filesystem group name not specified")
-	}
-
-	fsc := &apiclient.FileSystemCreateRequest{
-		Name:          v.GetId(),
-		GroupName:     v.filesystemGroupName,
-		TotalCapacity: capacity,
-		SsdCapacity:   v.getSsdCapacity(capacity),
-		Encrypted:     false,
-		AuthRequired:  false,
-		AllowNoKms:    false,
-	}
-	err = v.apiClient.CreateFileSystem(fsc, fs)
-	if err != nil {
-		glog.Errorln("Failed to create volume", v.GetId(), err)
-	}
-	return err
-}
-
 func (v FsVolume) updateValuesFromParams(params *map[string]string) error {
 	glog.Infoln("Received the following request params:", createKeyValuePairs(*params))
 	if params == nil {
@@ -271,8 +240,32 @@ func (v FsVolume) Create(capacity int64, params *map[string]string) error {
 		return errors.New("volume of type Filesystem is not supported on current version of Weka cluster")
 	}
 
-	if err := v.createFilesystem(capacity); err != nil {
-		glog.Errorf("Failed to create filesystem %s: %s", v.Filesystem, err.Error())
+	fs, err := v.getObject()
+	if err != nil {
+		return err
+	}
+	if fs != nil {
+		// return fs for idempotence
+		return nil
+	}
+
+	glog.V(3).Infoln("Filesystem", v.Filesystem, "not found, creating")
+	if v.filesystemGroupName == "" {
+		return status.Error(codes.InvalidArgument, "Filesystem group name not specified")
+	}
+
+	fsc := &apiclient.FileSystemCreateRequest{
+		Name:          v.GetId(),
+		GroupName:     v.filesystemGroupName,
+		TotalCapacity: capacity,
+		SsdCapacity:   v.getSsdCapacity(capacity),
+		Encrypted:     false,
+		AuthRequired:  false,
+		AllowNoKms:    false,
+	}
+	err = v.apiClient.CreateFileSystem(fsc, fs)
+	if err != nil {
+		glog.Errorln("Failed to create volume", v.GetId(), err)
 		return err
 	}
 	glog.V(3).Infof("Created volume %s in: %v", v.GetId(), v.Filesystem)
