@@ -271,13 +271,13 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 	}
 
 	err = volume.moveToTrash()
-	if os.IsNotExist(err) {
-		glog.V(4).Infof("Volume not found %s, but returning success for idempotence", volume.GetId())
-		return &csi.DeleteVolumeResponse{}, nil
-	}
-	// cleanup
 	if err != nil {
+		if os.IsNotExist(err) {
+			glog.V(4).Infof("Volume not found %s, but returning success for idempotence", volume.GetId())
+			return &csi.DeleteVolumeResponse{}, nil
+		}
 		return DeleteVolumeError(codes.Internal, err.Error())
+
 	}
 	return &csi.DeleteVolumeResponse{}, nil
 }
