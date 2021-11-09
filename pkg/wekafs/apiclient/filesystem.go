@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"k8s.io/helm/pkg/urlutil"
+	"strconv"
 )
 
 type FileSystem struct {
@@ -38,7 +39,7 @@ type FileSystem struct {
 }
 
 func (fs *FileSystem) String() string {
-	return fmt.Sprintln("FileSystem(fsUid:", fs.Uid, "name:", fs.Name, "capacity:", fs.TotalCapacity, ")")
+	return fmt.Sprintln("FileSystem(fsUid:", fs.Uid, "name:", fs.Name, "capacity:", strconv.FormatInt(fs.TotalCapacity, 10), ")")
 }
 
 func (a *ApiClient) GetFileSystemByUid(uid uuid.UUID, fs *FileSystem) error {

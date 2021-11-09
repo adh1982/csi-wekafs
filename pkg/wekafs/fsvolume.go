@@ -117,7 +117,7 @@ func (v FsVolume) UpdateCapacity(capacityLimit int64, params *map[string]string)
 }
 
 func (v FsVolume) moveToTrash() error {
-	return nil
+	return v.Delete()
 }
 
 func (v FsVolume) getFullPath() string {
@@ -279,9 +279,11 @@ func (v FsVolume) Delete() error {
 		return status.Errorf(codes.Internal, "Failed to delete filesystem %s", v.Filesystem)
 	}
 	if fs == nil {
+		glog.Errorln("Apparently filesystem not exists, returning OK", v.Filesystem)
 		// FS doesn't exist already, return OK for idempotence
 		return nil
 	}
+	glog.Infoln("Attempting deletion of filesystem", v.Filesystem)
 	fsd := &apiclient.FileSystemDeleteRequest{Uid: fs.Uid}
 	err = v.apiClient.DeleteFileSystem(fsd)
 	if err != nil {
