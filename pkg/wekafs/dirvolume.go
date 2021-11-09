@@ -30,11 +30,6 @@ var ErrNoXattrOnVolume = errors.New("xattr not set on volume")
 var ErrBadXattrOnVolume = errors.New("could not parse xattr on volume")
 
 func (v DirVolume) isMounted(xattr bool) bool {
-	//if v.mountPath[xattr] != "" {
-	//	// good path, we mounted from within this object
-	//	glog.V(4).Infoln("Volume", v.GetId(), "is already mounted")
-	//	return true
-	//}
 	if v.mountPath[xattr] == "" {
 		return false
 	}
