@@ -194,7 +194,7 @@ func (v DirVolume) updateCapacityQuota(enforceCapacity *bool, capacityLimit int6
 }
 
 func (v DirVolume) updateCapacityXattr(enforceCapacity *bool, capacityLimit int64) error {
-	glog.V(4).Infoln("Updating xattrs on volume", v.GetId(), "to", capacityLimit, "enforce:", enforceCapacity)
+	glog.V(4).Infoln("Updating xattrs on volume", v.GetId(), "to", capacityLimit, "enforce capacity:", *enforceCapacity)
 	if enforceCapacity != nil && *enforceCapacity {
 		glog.V(3).Infof("Legacy volume does not support enforce capacity")
 	}
