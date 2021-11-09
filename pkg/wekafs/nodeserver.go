@@ -96,7 +96,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	if err != nil {
 		return NodePublishVolumeError(codes.Internal, fmt.Sprintln("Failed to initialize Weka API client for the request", err))
 	}
-	volume, err := NewVolume(req.GetVolumeId(), client)
+	volume, err := NewVolume(req.GetVolumeId(), client, ns.mounter, nil)
 	if err != nil {
 		return NodePublishVolumeError(codes.InvalidArgument, err.Error())
 	}
@@ -143,8 +143,8 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	glog.V(4).Infof("target %v\nfstype %v\ndevice %v\nreadonly %v\nvolumeId %v\nattributes %v\nmountflags %v\n",
 		targetPath, fsType, deviceId, readOnly, volume.GetId(), attrib, mountFlags)
 
-	mountPoint, err, unmount := volume.Mount(ns.mounter, false)
-	ok, err := volume.Exists(mountPoint)
+	err, unmount := volume.Mount(false)
+	ok, err := volume.Exists()
 	if err != nil {
 		return NodePublishVolumeError(codes.Internal, err.Error())
 	}
@@ -152,7 +152,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		unmount()
 		return NodePublishVolumeError(codes.NotFound, fmt.Sprintf("Volume %s was not found", volume.GetId()))
 	}
-	fullPath := volume.getFullPath(mountPoint)
+	fullPath := volume.getFullPath()
 
 	glog.Infof("Ensuring target mount root directory exists: %s", filepath.Dir(targetPath))
 	if err = os.MkdirAll(filepath.Dir(targetPath), DefaultVolumePermissions); err != nil {
@@ -213,7 +213,7 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 	glog.Infof("Received NodeUnpublishVolume request %s", req)
 	// Check arguments
 
-	volume, err := NewVolume(req.GetVolumeId(), nil)
+	volume, err := NewVolume(req.GetVolumeId(), nil, ns.mounter, nil)
 	if err != nil {
 		return &csi.NodeUnpublishVolumeResponse{}, err
 		//return NodeUnpublishVolumeError(codes.Internal, err.Error())
@@ -265,7 +265,7 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 	glog.V(4).Infof("wekafs: volume %s has been unpublished.", volume.GetId())
 	// Doing this only in case both bind unmount and remove succeeded
 	glog.Infof("Calling decrease refcount on mount %s", volume.GetId())
-	err = volume.Unmount(ns.mounter)
+	err = volume.Unmount(false)
 	if err != nil {
 		glog.Errorf("Post-unpublish unmount failed %s", err)
 	}
@@ -287,7 +287,7 @@ func (ns *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVol
 	if err != nil {
 		return NodeStageVolumeError(codes.Internal, fmt.Sprintln("Failed to initialize Weka API client for the request", err))
 	}
-	volume, err := NewVolume(req.GetVolumeId(), client)
+	volume, err := NewVolume(req.GetVolumeId(), client, ns.mounter, nil)
 	if err != nil {
 		return NodeStageVolumeError(codes.Internal, err.Error())
 	}
@@ -318,7 +318,7 @@ func NodeUnstageVolumeError(errorCode codes.Code, errorMessage string) (*csi.Nod
 func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
 
 	// Check arguments
-	volume, err := NewVolume(req.GetVolumeId(), nil)
+	volume, err := NewVolume(req.GetVolumeId(), nil, ns.mounter, nil)
 	if err != nil {
 		return NodeUnstageVolumeError(codes.Internal, err.Error())
 	}

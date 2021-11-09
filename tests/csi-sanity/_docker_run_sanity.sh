@@ -9,6 +9,8 @@ csi-sanity -csi.stagingdir /tmp/csi-test-staging \
   --csi.endpoint /tmp/weka-csi-test/node.sock \
   -csi.mountdir=/tmp/weka-csi-test/sanity-workspace/ \
   -ginkgo.failFast \
+  -ginkgo.progress \
+  -ginkgo.seed $RANDOM \
   -ginkgo.trace -ginkgo.v \
   -csi.testvolumeparameters /test/wekafs-dirv1.yaml
 
@@ -18,5 +20,7 @@ csi-sanity -csi.stagingdir /tmp/csi-test-staging \
   --csi.endpoint /tmp/weka-csi-test/node.sock \
   -csi.mountdir=/tmp/weka-csi-test/sanity-workspace/ \
   -ginkgo.failFast \
+  -ginkgo.progress \
+  -ginkgo.seed $RANDOM \
   -ginkgo.trace -ginkgo.v \
   -csi.testvolumeparameters /test/wekafs-existingPathv1.yaml

@@ -186,6 +186,14 @@ func (m *wekaMounter) unmount(fs string, xattr bool) error {
 	}
 }
 
+func (m *wekaMounter) HasMount(filesystem string, xattr bool) bool {
+	fsReq := fsRequest{filesystem, xattr}
+	if mnt, ok := m.mountMap[fsReq]; ok {
+		return mnt.refCount > 0
+	}
+	return false
+}
+
 func (m *wekaMounter) LogActiveMounts() {
 	if len(m.mountMap) > 0 {
 		count := 0

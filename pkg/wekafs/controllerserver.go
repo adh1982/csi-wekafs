@@ -155,31 +155,29 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		return CreateVolumeError(codes.Internal, fmt.Sprintln("Failed to initialize Weka API client for the request", err))
 	}
 
-	volume, err := NewVolume(volumeID, client)
+	volume, err := NewVolume(volumeID, client, cs.mounter, cs.gc)
 	if err != nil {
 		return CreateVolumeError(codes.Internal, err.Error())
 	}
-
-	// Perform mount in order to be able to access Xattrs and get a full volume root path
-	mountPoint, err, unmount := volume.Mount(cs.mounter, true)
-	defer unmount()
-	if err != nil {
-		return CreateVolumeError(codes.Internal, err.Error())
-	}
-	volPath := volume.getFullPath(mountPoint)
 
 	// Check for maximum available capacity
 	capacity := req.GetCapacityRange().GetRequiredBytes()
 
+	volumeType := volume.GetType()
+	var volPath string
+	switch volumeType {
+	case VolumeTypeDirV1:
+		// Perform mount in order to be able to access Xattrs and get a full volume root path
+	}
+
 	// If directory already exists, return the create response for idempotence if size matches, or error
-	volExists, err := volume.Exists(mountPoint)
+	volExists, err := volume.Exists()
 	if err != nil {
 		return CreateVolumeError(codes.Internal, fmt.Sprintln("Could not check if volume exists", volPath))
 	}
 	if volExists {
-		glog.V(3).Infof("Directory already exists: %v", volPath)
-
-		currentCapacity, err := volume.GetCapacity(mountPoint)
+		glog.V(3).Infof("Volume already exists: %v", volume.GetId())
+		currentCapacity, err := volume.GetCapacity()
 		if err != nil {
 			return CreateVolumeError(codes.Internal, err.Error())
 		}
@@ -199,20 +197,20 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	}
 
 	// validate minimum capacity before create new volume
-	maxStorageCapacity, err := volume.getMaxCapacity(mountPoint)
+	maxStorageCapacity, err := volume.getMaxCapacity()
 	if err != nil {
-		return CreateVolumeError(codes.Internal, fmt.Sprintf("Cannot obtain free capacity for volume %s", volumeID))
+		return CreateVolumeError(codes.Internal, fmt.Sprintf("CreateVolume: Cannot obtain free capacity for volume %s", volumeID))
 	}
 	if capacity > maxStorageCapacity {
 		return CreateVolumeError(codes.OutOfRange, fmt.Sprintf("Requested capacity %d exceeds maximum allowed %d", capacity, maxStorageCapacity))
 	}
 
 	// Actually try to create the volume here
-	enforceCapacity, err := getStrictCapacityFromParams(req.GetParameters())
 	if err != nil {
 		return CreateVolumeError(codes.Internal, err.Error())
 	}
-	if err := volume.Create(mountPoint, enforceCapacity, capacity); err != nil {
+	params := req.GetParameters()
+	if err := volume.Create(capacity, &params); err != nil {
 		return &csi.CreateVolumeResponse{}, err
 	}
 
@@ -226,7 +224,10 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 }
 
 func getStrictCapacityFromParams(params map[string]string) (bool, error) {
-	qt := params["capacityEnforcement"]
+	qt := ""
+	if val, ok := params["capacityEnforcement"]; ok {
+		qt = val
+	}
 	enforceCapacity := true
 	switch apiclient.QuotaType(qt) {
 	case apiclient.QuotaTypeSoft:
@@ -262,7 +263,7 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 		return DeleteVolumeError(codes.Internal, fmt.Sprintln("Failed to initialize Weka API client for the request", err))
 	}
 
-	volume, err := NewVolume(volumeID, client)
+	volume, err := NewVolume(volumeID, client, cs.mounter, cs.gc)
 	if err != nil {
 		// Should return ok on incorrect ID (by CSI spec)
 		return &csi.DeleteVolumeResponse{}, nil
@@ -273,7 +274,7 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 		return DeleteVolumeError(codes.Internal, err.Error())
 	}
 
-	err = volume.moveToTrash(cs.mounter, cs.gc)
+	err = volume.moveToTrash()
 	if os.IsNotExist(err) {
 		glog.V(4).Infof("Volume not found %s, but returning success for idempotence", volume.GetId())
 		return &csi.DeleteVolumeResponse{}, nil
@@ -304,7 +305,7 @@ func (cs *controllerServer) ControllerExpandVolume(ctx context.Context, req *csi
 		return ExpandVolumeError(codes.Internal, fmt.Sprintln("Failed to initialize Weka API client for the request", err))
 	}
 
-	volume, err := NewVolume(req.GetVolumeId(), client)
+	volume, err := NewVolume(req.GetVolumeId(), client, cs.mounter, cs.gc)
 	if err != nil {
 		return ExpandVolumeError(codes.NotFound, fmt.Sprintf("Volume with id %s does not exist", req.GetVolumeId()))
 	}
@@ -314,24 +315,17 @@ func (cs *controllerServer) ControllerExpandVolume(ctx context.Context, req *csi
 		return ExpandVolumeError(codes.InvalidArgument, "Capacity range not provided")
 	}
 
-	// Perform mount in order to be able to access Xattrs and get a full volume root path
-	mountPoint, err, unmount := volume.Mount(cs.mounter, true)
-	defer unmount()
-	if err != nil {
-		return ExpandVolumeError(codes.Internal, err.Error())
-	}
-
 	capacity := capRange.GetRequiredBytes()
 
-	maxStorageCapacity, err := volume.getMaxCapacity(mountPoint)
+	maxStorageCapacity, err := volume.getMaxCapacity()
 	if err != nil {
-		return ExpandVolumeError(codes.Unknown, fmt.Sprintf("Cannot obtain free capacity for volume %s", volume.GetId()))
+		return ExpandVolumeError(codes.Unknown, fmt.Sprintf("ExpandVolume: Cannot obtain free capacity for volume %s", volume.GetId()))
 	}
 	if capacity > maxStorageCapacity {
 		return ExpandVolumeError(codes.OutOfRange, fmt.Sprintf("Requested capacity %d exceeds maximum allowed %d", capacity, maxStorageCapacity))
 	}
 
-	ok, err := volume.Exists(mountPoint)
+	ok, err := volume.Exists()
 	if err != nil {
 		return ExpandVolumeError(codes.Internal, err.Error())
 	}
@@ -339,14 +333,15 @@ func (cs *controllerServer) ControllerExpandVolume(ctx context.Context, req *csi
 		return ExpandVolumeError(codes.Internal, "Volume does not exist")
 	}
 
-	currentSize, err := volume.GetCapacity(mountPoint)
+	currentSize, err := volume.GetCapacity()
 	if err != nil {
 		return ExpandVolumeError(codes.Internal, "Could not get volume capacity")
 	}
 	glog.Infof("Volume %s: current capacity: %d, expanding to %d", volume.GetId(), currentSize, capacity)
 
 	if currentSize != capacity {
-		if err := volume.UpdateCapacity(mountPoint, nil, capacity); err != nil {
+		params := make(map[string]string)
+		if err := volume.UpdateCapacity(capacity, &params); err != nil {
 			return ExpandVolumeError(codes.Internal, fmt.Sprintf("Could not update volume %s: %v", volume, err))
 		}
 	}
@@ -391,17 +386,12 @@ func (cs *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req 
 		return ValidateVolumeCapsError(codes.Internal, fmt.Sprintln("Failed to initialize Weka API client for the request", err))
 	}
 
-	volume, err := NewVolume(req.GetVolumeId(), client)
+	volume, err := NewVolume(req.GetVolumeId(), client, cs.mounter, cs.gc)
 	if err != nil {
 		return ValidateVolumeCapsError(codes.Internal, err.Error())
 	}
 	// TODO: Mount/validate in xattr if there is anything to validate. Right now mounting just to see if folder exists
-	mountPoint, err, unmount := volume.Mount(cs.mounter, false)
-	defer unmount()
-	if err != nil {
-		return ValidateVolumeCapsError(codes.Internal, fmt.Sprintf("Could not mount volume %s", req.GetVolumeId()))
-	}
-	if ok, err2 := volume.Exists(mountPoint); err2 != nil && ok {
+	if ok, err2 := volume.Exists(); err2 != nil && ok {
 		return ValidateVolumeCapsError(codes.NotFound, fmt.Sprintf("Could not find volume %s", req.GetVolumeId()))
 	}
 
