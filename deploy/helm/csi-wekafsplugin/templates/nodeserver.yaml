@@ -65,6 +65,7 @@ spec:
       labels:
         app: {{ .Release.Name }}-node
     spec:
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- if .Values.nodeSelector }}
       nodeSelector: {{ toYaml .Values.nodeSelector | nindent 8}}
       {{- end }}

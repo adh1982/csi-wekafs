@@ -25,6 +25,8 @@ globalPluginTolerations: &globalPluginTolerations
   - key: node-role.kubernetes.io/master
     operator: Exists
     effect: NoSchedule
+terminationGracePeriodSeconds: 5
+
 controllerPluginTolerations: *globalPluginTolerations
 nodePluginTolerations: *globalPluginTolerations
 nodeSelector: {}
