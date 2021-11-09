@@ -178,7 +178,15 @@ func (m *wekaMounter) unmount(fs string, xattr bool) error {
 	m.LogActiveMounts()
 	fsReq := fsRequest{fs, xattr}
 	if mnt, ok := m.mountMap[fsReq]; ok {
-		return mnt.decRef()
+		err := mnt.decRef()
+		if err != nil {
+			if m.mountMap[fsReq].refCount <= 0 {
+				glog.V(5).Infoln("This is a last use of this mount, removing from map")
+				delete(m.mountMap, fsReq)
+			}
+		}
+		return err
+
 	} else {
 		// TODO: this could happen if the plugin was rebooted with this mount intact. Maybe we might add it to map?
 		glog.Warningf("Attempted to access mount point which is not known to the system (filesystem %s)", fs)
