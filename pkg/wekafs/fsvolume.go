@@ -221,7 +221,7 @@ func (v FsVolume) updateValuesFromParams(params *map[string]string) error {
 	}
 	if val, ok := (*params)["filesystemGroupName"]; ok {
 		v.filesystemGroupName = val
-		glog.V(5).Infoln("Set filesystemGroupName for %s", v.String())
+		glog.V(5).Infoln("Set filesystemGroupName:", v.String())
 	}
 	if val, ok := (*params)["ssdCapacityPercent"]; ok {
 		ssdPercent, err := strconv.Atoi(val)
@@ -238,11 +238,6 @@ func (v FsVolume) updateValuesFromParams(params *map[string]string) error {
 }
 
 func (v FsVolume) Create(capacity int64, params *map[string]string) error {
-	err := v.updateValuesFromParams(params)
-	if err != nil {
-		return errors.New(fmt.Sprintf("Failed to fetch volume parameters: %s", err.Error()))
-	}
-
 	if !v.apiClient.SupportsFilesystemAsVolume() {
 		return errors.New("volume of type Filesystem is not supported on current version of Weka cluster")
 	}
@@ -252,11 +247,17 @@ func (v FsVolume) Create(capacity int64, params *map[string]string) error {
 		return err
 	}
 	if fs != nil {
-		// return fs for idempotence
+		// return fs for idempotence // TODO: validate capacity or return error
 		return nil
 	}
 
 	glog.V(3).Infoln("Filesystem", v.Filesystem, "not found, creating:", v.String())
+
+	err = v.updateValuesFromParams(params)
+	if err != nil {
+		return errors.New(fmt.Sprintf("Failed to fetch volume parameters: %s", err.Error()))
+	}
+
 	if v.filesystemGroupName == "" {
 		return status.Error(codes.InvalidArgument, "Filesystem group name not specified")
 	}
