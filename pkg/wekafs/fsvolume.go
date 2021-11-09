@@ -241,6 +241,7 @@ func (v FsVolume) createFilesystem(capacity int64) error {
 }
 
 func (v FsVolume) updateValuesFromParams(params *map[string]string) error {
+	glog.Infoln("Received the following request params:", createKeyValuePairs(*params))
 	if params == nil {
 		return errors.New("failed to update filesystem params from request params")
 	}
