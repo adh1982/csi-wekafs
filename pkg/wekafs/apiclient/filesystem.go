@@ -168,7 +168,7 @@ type FileSystemCreateRequest struct {
 	GroupName     string `json:"group_name"`
 	TotalCapacity int64  `json:"total_capacity"`
 	ObsName       string `json:"obs_name,omitempty"`
-	SsdCapacity   int64  `json:"ssd_capacity,omitempty"`
+	SsdCapacity   *int64 `json:"ssd_capacity,omitempty"`
 	Encrypted     bool   `json:"encrypted,omitempty"`
 	AuthRequired  bool   `json:"auth_required,omitempty"`
 	AllowNoKms    bool   `json:"allow_no_kms,omitempty"`

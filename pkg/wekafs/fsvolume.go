@@ -68,11 +68,12 @@ func (v FsVolume) getObject() (*apiclient.FileSystem, error) {
 }
 
 // getSsdCapacity returns the SSD capacity based on required total capacity and storageClass param ssdCapacityPercent
-func (v FsVolume) getSsdCapacity(requiredCapacity int64) int64 {
+func (v FsVolume) getSsdCapacity(requiredCapacity int64) *int64 {
 	if v.ssdCapacityPercent == 100 {
-		return requiredCapacity
+		return nil
 	}
-	return requiredCapacity / 100 * int64(v.ssdCapacityPercent/100)
+	ret := requiredCapacity / 100 * int64(v.ssdCapacityPercent/100)
+	return &ret
 }
 
 //goland:noinspection GoUnusedParameter
@@ -103,7 +104,7 @@ func (v FsVolume) UpdateCapacity(capacityLimit int64, params *map[string]string)
 	fsu := &apiclient.FileSystemResizeRequest{
 		Uid:           fs.Uid,
 		TotalCapacity: &capLimit,
-		SsdCapacity:   &ssdLimit,
+		SsdCapacity:   ssdLimit,
 	}
 
 	err = v.apiClient.UpdateFileSystem(fsu, fs)
@@ -252,7 +253,6 @@ func (v FsVolume) Create(capacity int64, params *map[string]string) error {
 
 	}
 	glog.V(3).Infoln("Filesystem", v.Filesystem, "not found, creating:", v.String())
-
 	fsc := &apiclient.FileSystemCreateRequest{
 		Name:          v.Filesystem,
 		GroupName:     v.filesystemGroupName,
