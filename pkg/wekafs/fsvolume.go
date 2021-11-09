@@ -30,6 +30,7 @@ func (v FsVolume) getMaxCapacity() (int64, error) {
 	if err != nil {
 		return -1, status.Errorf(codes.FailedPrecondition, "Could not obtain free capacity for filesystem %s on cluster %s: %s", v.apiClient.ClusterName, err.Error())
 	}
+	glog.V(5).Infoln("Resolved free capacity as", maxCapacity)
 	return int64(maxCapacity), nil
 }
 

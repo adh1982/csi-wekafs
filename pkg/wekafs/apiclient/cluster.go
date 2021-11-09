@@ -52,10 +52,8 @@ func (a *ApiClient) GetFreeCapacity() (uint64, error) {
 		return 0, err
 	}
 	capacity := responseData.Capacity.UnprovisionedBytes
-	if capacity > 0 {
-		return capacity, nil
-	}
-	return 0, nil
+	a.Log(5, "Free capacity on cluster is", capacity)
+	return capacity, nil
 }
 
 type LoginRequest struct {
