@@ -156,11 +156,12 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	}
 	volume, err := NewVolume(volumeID, client, cs.mounter, cs.gc)
 
-	if volume.GetType() == VolumeTypeFsV1 && client == nil {
-		return CreateVolumeError(codes.InvalidArgument, "Cannot provision volume of type Filesystem without API")
-	}
 	if err != nil {
 		return CreateVolumeError(codes.Internal, err.Error())
+	}
+
+	if volume.GetType() == VolumeTypeFsV1 && client == nil {
+		return CreateVolumeError(codes.InvalidArgument, "Cannot provision volume of type Filesystem without API")
 	}
 
 	// Check for maximum available capacity

@@ -184,6 +184,15 @@ func (v FsVolume) Unmount(xattr bool) error {
 }
 
 func (v FsVolume) Exists() (bool, error) {
+	glog.V(3).Infoln("Checking if volume", v.GetId(), "exists")
+	fs, err := v.getObject()
+	if err != nil {
+		return false, err
+	}
+	if fs == nil {
+		return false, nil
+	}
+
 	err, unmount := v.Mount(false)
 	defer unmount()
 	if err != nil {
