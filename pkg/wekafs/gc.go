@@ -51,6 +51,7 @@ func (gc *dirVolumeGc) triggerGcVolume(volume DirVolume) {
 }
 
 func (gc *dirVolumeGc) purgeVolume(volume DirVolume) {
+	glog.V(3).Infoln("Starting garbage collection of volume", volume.GetId())
 	fs := volume.Filesystem
 	innerPath := volume.dirName
 	defer gc.finishGcCycle(fs)
@@ -60,11 +61,15 @@ func (gc *dirVolumeGc) purgeVolume(volume DirVolume) {
 	glog.Infof("Purging deleted volume data in %s", fullPath)
 	if err != nil {
 		glog.Errorf("Failed mounting FS %s for GC", fs)
+		return
 	}
 	if err := purgeDirectory(fullPath); err != nil {
 		glog.Errorf("Failed to remove directory %s", fullPath)
+		return
 	}
-	glog.Infof("Directory %s was successfully deleted", fullPath)
+
+	glog.V(4).Infof("Directory %s was successfully deleted", fullPath)
+	glog.V(3).Infoln("Garbage collection of volume", volume.GetId(), "completed successfully")
 }
 
 func purgeDirectory(path string) error {
