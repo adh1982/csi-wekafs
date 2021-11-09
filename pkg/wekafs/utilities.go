@@ -58,11 +58,20 @@ func getStringSha1(name string) string {
 
 func GetFSNameFromRequest(req *csi.CreateVolumeRequest) string {
 	var filesystemName string
-	filesystemName = req.GetParameters()["filesystemName"]
-	if filesystemName == "" {
-		filesystemName = defaultFilesystemName
+	if val, ok := req.GetParameters()["filesystemName"]; ok {
+		// explicitly specified FS name in request
+		filesystemName = val
+		if filesystemName != "" {
+			return filesystemName
+		}
 	}
-	return filesystemName
+
+	if val, ok := req.GetParameters()["volumeType"]; ok {
+		if val == string(VolumeTypeFsV1) {
+			return "aaaa" // TODO: function that derives the filesystem name from volumeID
+		}
+	}
+	return defaultFilesystemName
 }
 
 func GetFSName(volumeID string) string {
@@ -137,8 +146,19 @@ func validateVolumeId(volumeId string) error {
 		if re.MatchString(volumeId) {
 			return nil
 		}
+	case string(VolumeTypeFsV1):
+		// VolID format is as following:
+		// "<VolType>/<WEKA_FS_NAME>
+		// e.g.
+		// "fs/v1/aaaa/
+		// length limited to maxVolumeIdLength
+		r := VolumeTypeFsV1 + "/[^/]+$"
+		re := regexp.MustCompile(string(r))
+		if re.MatchString(volumeId) {
+			return nil
+		}
 	}
-	return status.Errorf(codes.InvalidArgument, "unsupported volumeID")
+	return status.Errorf(codes.InvalidArgument, fmt.Sprintf("unsupported volumeID %s for type %s", volumeId, volumeType))
 }
 
 func updateXattrs(volPath string, attrs map[string][]byte) error {

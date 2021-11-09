@@ -154,8 +154,11 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	if err != nil {
 		return CreateVolumeError(codes.Internal, fmt.Sprintln("Failed to initialize Weka API client for the request", err))
 	}
-
 	volume, err := NewVolume(volumeID, client, cs.mounter, cs.gc)
+
+	if volume.GetType() == VolumeTypeFsV1 && client == nil {
+		return CreateVolumeError(codes.InvalidArgument, "Cannot provision volume of type Filesystem without API")
+	}
 	if err != nil {
 		return CreateVolumeError(codes.Internal, err.Error())
 	}
@@ -163,17 +166,10 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	// Check for maximum available capacity
 	capacity := req.GetCapacityRange().GetRequiredBytes()
 
-	volumeType := volume.GetType()
-	var volPath string
-	switch volumeType {
-	case VolumeTypeDirV1:
-		// Perform mount in order to be able to access Xattrs and get a full volume root path
-	}
-
 	// If directory already exists, return the create response for idempotence if size matches, or error
 	volExists, err := volume.Exists()
 	if err != nil {
-		return CreateVolumeError(codes.Internal, fmt.Sprintln("Could not check if volume exists", volPath))
+		return CreateVolumeError(codes.Internal, fmt.Sprintln("Could not check if volume exists, volumeID", volume.GetId()))
 	}
 	if volExists {
 		glog.V(3).Infof("Volume already exists: %v", volume.GetId())

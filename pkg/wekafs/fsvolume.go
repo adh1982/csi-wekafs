@@ -1,23 +1,24 @@
 package wekafs
 
 import (
+	"errors"
+	"fmt"
 	"github.com/golang/glog"
 	"github.com/wekafs/csi-wekafs/pkg/wekafs/apiclient"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"os/exec"
-	"strings"
+	"strconv"
 )
 
 type FsVolume struct {
-	id                 string
-	Filesystem         string
-	GroupName          string
-	volumeType         string
-	ssdCapacityPercent int
-	apiClient          *apiclient.ApiClient
-	mountPath          string
-	mounter            *wekaMounter
+	id                  string
+	Filesystem          string
+	filesystemGroupName string
+	volumeType          string
+	ssdCapacityPercent  int
+	apiClient           *apiclient.ApiClient
+	mountPath           map[bool]string
+	mounter             *wekaMounter
 }
 
 func (v FsVolume) getMaxCapacity() (int64, error) {
@@ -67,12 +68,17 @@ func (v FsVolume) getObject() (*apiclient.FileSystem, error) {
 	return fs, nil
 }
 
-//getSsdCapacity returns the SSD capacity based on required total capacity and storageClass param ssdCapacityPercent
+// getSsdCapacity returns the SSD capacity based on required total capacity and storageClass param ssdCapacityPercent
 func (v FsVolume) getSsdCapacity(requiredCapacity int64) int64 {
+	if v.ssdCapacityPercent == 100 {
+		return requiredCapacity
+	}
 	return requiredCapacity / 100 * int64(v.ssdCapacityPercent/100)
 }
 
+//goland:noinspection GoUnusedParameter
 func (v FsVolume) UpdateCapacity(capacityLimit int64, params *map[string]string) error {
+	// params are deliberately disregarded in this function
 	glog.V(3).Infoln("Updating capacity of the volume", v.GetId(), "to", capacityLimit)
 
 	currentCapacity, err := v.GetCapacity()
@@ -115,43 +121,47 @@ func (v FsVolume) moveToTrash() error {
 }
 
 func (v FsVolume) getFullPath() string {
-	return v.mountPath
+	return v.mountPath[false]
+}
+
+func (v FsVolume) getFullPathXattr() string {
+	return v.mountPath[true]
 }
 
 func (v FsVolume) GetId() string {
 	return v.id
 }
 
-func (v FsVolume) isMounted() bool {
-	if v.mountPath != "" {
-		// good path, we mounted from within this object
+func (v FsVolume) isMounted(xattr bool) bool {
+	if v.mountPath[xattr] == "" {
+		return false
+	}
+	if xattr {
+		if PathIsWekaMount(v.getFullPathXattr()) {
+			return true
+		}
+	} else {
+		if PathIsWekaMount(v.getFullPath()) {
+			return true
+		}
+	}
+	if v.mounter.HasMount(v.Filesystem, xattr) {
 		return true
 	}
-	mountcmd := "mount -t wekafs | grep -w -e '^" + v.Filesystem + " on'"
-	res, _ := exec.Command("sh", "-c", mountcmd).Output()
-	if len(res) == 0 {
-		// could not find a mount that matches current config
-		return false
-	}
-	parts := strings.Split(strings.TrimSpace(string(res)), " ")
-	if len(parts) < 3 {
-		return false
-	}
-	v.mountPath = parts[2]
-	return true
+	return false
 }
 
 func (v FsVolume) Mount(xattr bool) (error, UnmountFunc) {
 	var mountPath string
 	var err error
-	if !v.isMounted() {
+	if !v.isMounted(xattr) {
 		glog.V(4).Infoln("Volume", v.GetId(), "is not mounted, mounting with xattr:", xattr)
 		if xattr {
 			mountPath, err, _ = v.mounter.MountXattr(v.Filesystem)
 		} else {
 			mountPath, err, _ = v.mounter.Mount(v.Filesystem)
 		}
-		v.mountPath = mountPath
+		v.mountPath[xattr] = mountPath
 		return err, func() {
 			_ = v.Unmount(xattr)
 		}
@@ -161,51 +171,55 @@ func (v FsVolume) Mount(xattr bool) (error, UnmountFunc) {
 }
 
 func (v FsVolume) Unmount(xattr bool) error {
-	err := v.mounter.Unmount(v.Filesystem)
+	var err error
+	if xattr {
+		err = v.mounter.UnmountXattr(v.Filesystem)
+	} else {
+		err = v.mounter.Unmount(v.Filesystem)
+	}
 	if err != nil {
-		v.mountPath = ""
+		v.mountPath[xattr] = ""
 	}
 	return err
 }
 
 func (v FsVolume) Exists() (bool, error) {
-	fs, err := v.getObject()
+	err, unmount := v.Mount(false)
+	defer unmount()
 	if err != nil {
 		return false, err
 	}
-	if fs == nil {
+	if !PathExists(v.getFullPath()) {
+		glog.Infof("Volume %s not found on filesystem %s", v.GetId(), v.Filesystem)
 		return false, nil
 	}
-
-	//if PathIsWekaMount(v.getFullPath(mountPoint)) {
-	//	glog.Infof("Volume %s: exists and accessible via %s", v.GetId(), v.getFullPath(mountPoint))
-	//	return true, nil
-	//}
-	//
-	//if !PathExists(v.getFullPath(mountPoint)) {
-	//	glog.Infof("Volume %s: filesystem %s is not mounted", v.GetId(), v.Filesystem)
-	//	return false, nil
-	//}
-	//if err := pathIsDirectory(v.getFullPath(mountPoint)); err != nil {
-	//	glog.Errorf("Volume %s is unusable: path %s is a not a directory", v.GetId(), v.getFullPath(mountPoint))
-	//	return false, status.Error(codes.Internal, err.Error())
-	//}
+	if err := pathIsDirectory(v.getFullPath()); err != nil {
+		glog.Errorf("Volume %s is unusable: path %s is a not a directory", v.GetId(), v.Filesystem)
+		return false, status.Error(codes.Internal, err.Error())
+	}
+	glog.Infof("Volume %s exists and accessible via %s", v.id, v.getFullPath())
 	return true, nil
 }
 
 func (v FsVolume) createFilesystem(capacity int64) error {
 	fs, err := v.getObject()
 	if err != nil {
-		return status.Error(codes.Internal, "Error fetching existing filesystem")
+		switch t := err.(type) {
+		case apiclient.ApiNotFoundError:
+			glog.V(3).Infoln("Filesystem", v.Filesystem, "not found, creating")
+
+		default:
+			return status.Error(codes.Internal, t.Error())
+		}
 	}
 
-	if v.GroupName == "" {
+	if v.filesystemGroupName == "" {
 		return status.Error(codes.InvalidArgument, "Filesystem group name not specified")
 	}
 
 	fsc := &apiclient.FileSystemCreateRequest{
 		Name:          v.GetId(),
-		GroupName:     v.GroupName,
+		GroupName:     v.filesystemGroupName,
 		TotalCapacity: capacity,
 		SsdCapacity:   v.getSsdCapacity(capacity),
 		Encrypted:     false,
@@ -219,7 +233,36 @@ func (v FsVolume) createFilesystem(capacity int64) error {
 	return err
 }
 
+func (v FsVolume) updateValuesFromParams(params *map[string]string) error {
+	if params == nil {
+		return errors.New("failed to update filesystem params from request params")
+	}
+	if val, ok := (*params)["filesystemGroupName"]; ok {
+		v.filesystemGroupName = val
+	}
+	if val, ok := (*params)["ssdCapacityPercent"]; ok {
+		ssdPercent, err := strconv.Atoi(val)
+		if err != nil {
+			return status.Errorf(codes.InvalidArgument, "Failed to parse percents from storageclass")
+		}
+		v.ssdCapacityPercent = ssdPercent
+	} else {
+		// default value
+		v.ssdCapacityPercent = 100
+	}
+	return nil
+}
+
 func (v FsVolume) Create(capacity int64, params *map[string]string) error {
+	err := v.updateValuesFromParams(params)
+	if err != nil {
+		return errors.New(fmt.Sprintf("Failed to fetch volume parameters: %s", err.Error()))
+	}
+
+	if !v.apiClient.SupportsFilesystemAsVolume() {
+		return errors.New("volume of type Filesystem is not supported on current version of Weka cluster")
+	}
+
 	if err := v.createFilesystem(capacity); err != nil {
 		glog.Errorf("Failed to create filesystem %s", v.Filesystem)
 		return err
