@@ -57,13 +57,11 @@ func (v FsVolume) getObject() (*apiclient.FileSystem, error) {
 	}
 	fs, err := v.apiClient.GetFileSystemByName(v.Filesystem)
 	if err != nil {
-		switch t := err.(type) {
-		case apiclient.ApiNotFoundError:
+		if err == apiclient.ObjectNotFoundError {
 			return nil, nil // we know that volume doesn't exist
-		default:
-			glog.Errorln("Failed to fetch fs object for volume ID", v.GetId(), "filesystem name:", v.Filesystem)
-			return nil, t // any other error
 		}
+		glog.Errorln("Failed to fetch fs object for volume ID", v.GetId(), "filesystem name:", v.Filesystem)
+		return nil, err
 	}
 	return fs, nil
 }
