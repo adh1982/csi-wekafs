@@ -250,6 +250,7 @@ func (driver *wekaFsDriver) Run() {
 
 const (
 	VolumeTypeDirV1  VolumeType = "dir/v1"
+	VolumeTypeFsV1   VolumeType = "fs/v1"
 	LegacySecretPath            = "/legacy-volume-access"
 )
 

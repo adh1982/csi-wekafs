@@ -46,6 +46,18 @@ func (a *ApiClient) fetchClusterInfo() error {
 	return nil
 }
 
+func (a *ApiClient) GetFreeCapacity() (uint64, error) {
+	responseData := &ClusterInfoResponse{}
+	if err := a.Get(ApiPathClusterInfo, nil, responseData); err != nil {
+		return 0, err
+	}
+	capacity := responseData.Capacity.UnprovisionedBytes
+	if capacity > 0 {
+		return capacity, nil
+	}
+	return 0, nil
+}
+
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -74,6 +86,11 @@ type TokenExpiryResponse struct {
 	AccessTokenExpiry  int64 `json:"access_token_expiry"`
 	RefreshTokenExpiry int64 `json:"refresh_token_expiry"`
 }
+type Capacity struct {
+	TotalBytes         uint64 `json:"total_bytes"`
+	HotSpareBytes      uint64 `json:"hot_spare_bytes"`
+	UnprovisionedBytes uint64 `json:"unprovisioned_bytes"`
+}
 
 type ClusterInfoResponse struct {
 	Name        string    `json:"name"`
@@ -81,4 +98,5 @@ type ClusterInfoResponse struct {
 	InitStage   string    `json:"init_stage"`
 	Release     string    `json:"release"`
 	Guid        uuid.UUID `json:"guid"`
+	Capacity    Capacity  `json:"capacity,omitempty"`
 }

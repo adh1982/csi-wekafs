@@ -39,6 +39,11 @@ func createVolumeIdFromRequest(req *csi.CreateVolumeRequest, dynamicVolPath stri
 		}
 		return volId, nil
 
+	case string(VolumeTypeFsV1):
+		filesystemName := GetFSNameFromRequest(req)
+		volId = filepath.Join(volType, filesystemName)
+		return volId, nil
+
 	default:
 		return "", status.Errorf(codes.InvalidArgument, "Unsupported VolumeType in CreateVolumeRequest")
 	}

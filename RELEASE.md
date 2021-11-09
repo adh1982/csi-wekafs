@@ -1,3 +1,13 @@
+# Release 0.8.0
+## New Features
+### Filesystem provisioning support
+Filesystems can now be directly provisioned as persistent volumes.
+Both dynamic provisioning (create file system on demand) and static provisioning 
+(use existing filesystem as a persistent volume) are supported
+
+See `examples/dynamic_filesystem`, `examples/static_filesystem` for more information
+
+
 # Release 0.7.2
 ## Improvements
 - Upgrade sidecar components to latest versions on gcr.io
