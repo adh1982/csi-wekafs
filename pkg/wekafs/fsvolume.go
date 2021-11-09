@@ -256,7 +256,7 @@ func (v FsVolume) Create(capacity int64, params *map[string]string) error {
 		return nil
 	}
 
-	glog.V(3).Infoln("Filesystem", v.Filesystem, "not found, creating")
+	glog.V(3).Infoln("Filesystem", v.Filesystem, "not found, creating:", v.String())
 	if v.filesystemGroupName == "" {
 		return status.Error(codes.InvalidArgument, "Filesystem group name not specified")
 	}
