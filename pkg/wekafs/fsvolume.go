@@ -214,29 +214,6 @@ func (v FsVolume) Exists() (bool, error) {
 	return true, nil
 }
 
-func (v FsVolume) updateValuesFromParams(params *map[string]string) error {
-	glog.Infoln("Received the following request params:", createKeyValuePairs(*params))
-	if params == nil {
-		return errors.New("failed to update filesystem params from request params")
-	}
-	if val, ok := (*params)["filesystemGroupName"]; ok {
-		v.filesystemGroupName = val
-		glog.V(5).Infoln("Set filesystemGroupName:", v.String())
-	}
-	if val, ok := (*params)["ssdCapacityPercent"]; ok {
-		ssdPercent, err := strconv.Atoi(val)
-		if err != nil {
-			return status.Errorf(codes.InvalidArgument, "Failed to parse percents from storageclass")
-		}
-		v.ssdCapacityPercent = ssdPercent
-	} else {
-		// default value
-		v.ssdCapacityPercent = 100
-	}
-	glog.Infoln("Filesystem object after update:", v)
-	return nil
-}
-
 func (v FsVolume) Create(capacity int64, params *map[string]string) error {
 	if !v.apiClient.SupportsFilesystemAsVolume() {
 		return errors.New("volume of type Filesystem is not supported on current version of Weka cluster")
@@ -253,14 +230,31 @@ func (v FsVolume) Create(capacity int64, params *map[string]string) error {
 
 	glog.V(3).Infoln("Filesystem", v.Filesystem, "not found, creating:", v.String())
 
-	err = v.updateValuesFromParams(params)
-	if err != nil {
-		return errors.New(fmt.Sprintf("Failed to fetch volume parameters: %s", err.Error()))
+	glog.Infoln("Received the following request params:", createKeyValuePairs(*params))
+	if params == nil {
+		return errors.New("failed to update filesystem params from request params")
 	}
 
-	if v.filesystemGroupName == "" {
-		return status.Error(codes.InvalidArgument, "Filesystem group name not specified")
+	if val, ok := (*params)["ssdCapacityPercent"]; ok {
+		ssdPercent, err := strconv.Atoi(val)
+		if err != nil {
+			return status.Errorf(codes.InvalidArgument, "Failed to parse percents from storageclass")
+		}
+		v.ssdCapacityPercent = ssdPercent
+	} else {
+		// default value
+		v.ssdCapacityPercent = 100
 	}
+	if val, ok := (*params)["filesystemGroupName"]; ok {
+		v.filesystemGroupName = val
+		glog.V(5).Infoln("Set filesystemGroupName:", v.filesystemGroupName)
+		if v.filesystemGroupName == "" {
+			return status.Error(codes.InvalidArgument, "Filesystem group name not specified")
+		}
+
+	}
+
+	glog.Infoln("Filesystem object after update:", v)
 
 	fsc := &apiclient.FileSystemCreateRequest{
 		Name:          v.GetId(),

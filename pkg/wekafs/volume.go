@@ -46,13 +46,14 @@ func NewVolume(volumeId string, apiClient *apiclient.ApiClient, mounter *wekaMou
 		}, nil
 	case string(VolumeTypeFsV1):
 		return &FsVolume{
-			id:                 volumeId,
-			Filesystem:         GetFSName(volumeId),
-			volumeType:         GetVolumeType(volumeId),
-			ssdCapacityPercent: 100,
-			apiClient:          apiClient,
-			mounter:            mounter,
-			mountPath:          make(map[bool]string),
+			id:                  volumeId,
+			Filesystem:          GetFSName(volumeId),
+			volumeType:          GetVolumeType(volumeId),
+			ssdCapacityPercent:  100,
+			apiClient:           apiClient,
+			mounter:             mounter,
+			mountPath:           make(map[bool]string),
+			filesystemGroupName: "",
 		}, nil
 	default:
 		return nil, errors.New("unsupported volume type requested")
