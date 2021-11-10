@@ -101,6 +101,13 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		return NodePublishVolumeError(codes.InvalidArgument, err.Error())
 	}
 
+	volExists, err := volume.Exists()
+	if err != nil {
+		return NodePublishVolumeError(codes.Internal, fmt.Sprintln("Failed to publish a volume as it could not be contacted"))
+	}
+	if !volExists {
+		return NodePublishVolumeError(codes.Internal, fmt.Sprintln("Failed to publish a volume that doesn't exist"))
+	}
 	// Check volume capabitily arguments
 	if req.GetVolumeCapability() == nil {
 		return NodePublishVolumeError(codes.InvalidArgument, "Volume capability missing in request")
