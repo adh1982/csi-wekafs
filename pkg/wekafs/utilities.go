@@ -41,11 +41,12 @@ func createVolumeIdFromRequest(req *csi.CreateVolumeRequest, dynamicVolPath stri
 
 	case string(VolumeTypeFsV1):
 		filesystemName := GetFSNameFromRequest(req)
-		if filesystemName == "" {
-			asciiPart := getAsciiPart(name, 20)
-			hash := getStringSha1(name)[0:11]
-			filesystemName = asciiPart + "-" + hash
+		if filesystemName != "" {
+			glog.Warningln("filesystemName was specified in storage class and is disregarded for volumeType", volType)
 		}
+		asciiPart := getAsciiPart(name, 20)
+		hash := getStringSha1(name)[0:11]
+		filesystemName = asciiPart + "-" + hash
 		volId = filepath.Join(volType, filesystemName)
 		return volId, nil
 
