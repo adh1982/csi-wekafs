@@ -1,0 +1,13 @@
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: pvc-wekafs-fs-static
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: storageclass-wekafs-fs-static
+  volumeName: pv-wekafs-fs-static
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 1Gi
