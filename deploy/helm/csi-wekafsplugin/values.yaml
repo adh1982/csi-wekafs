@@ -18,6 +18,8 @@ images:
   registrarsidecar: k8s.gcr.io/sig-storage/csi-node-driver-registrar:v2.3.0
   # "images.resizer-sidercar" defines the container image used for the csi provisioner sidecar
   resizersidecar: k8s.gcr.io/sig-storage/csi-resizer:v1.3.0
+  # "images.snapshotter-sidercar" defines the container image used for the csi provisioner sidecar
+  snapshottersidecar: k8s.gcr.io/sig-storage/csi-snapshotter:v4.2.1
   # images.csidriver defines csidriver image used for external provisioning
   csidriver: quay.io/weka.io/csi-wekafs
   csidriverTag: *csiDriverVersion

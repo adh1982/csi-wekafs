@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/golang/glog"
+	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/pkg/xattr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 func createVolumeIdFromRequest(req *csi.CreateVolumeRequest, dynamicVolPath string) (string, error) {
@@ -29,6 +31,9 @@ func createVolumeIdFromRequest(req *csi.CreateVolumeRequest, dynamicVolPath stri
 	case string(VolumeTypeDirV1):
 		// we have a dir in request or no info
 		filesystemName := GetFSNameFromRequest(req)
+		if filesystemName == "" {
+			return "", status.Errorf(codes.InvalidArgument, "missing filesystem name in CreateVolumeRequest")
+		}
 		asciiPart := getAsciiPart(name, 64)
 		hash := getStringSha1(name)
 		folderName := asciiPart + "-" + hash
@@ -44,15 +49,70 @@ func createVolumeIdFromRequest(req *csi.CreateVolumeRequest, dynamicVolPath stri
 		if filesystemName != "" {
 			glog.Warningln("filesystemName was specified in storage class and is disregarded for volumeType", volType)
 		}
-		asciiPart := getAsciiPart(name, 20)
-		hash := getStringSha1(name)[0:11]
-		filesystemName = asciiPart + "-" + hash
-		volId = filepath.Join(volType, filesystemName)
+		volId = calculateVolumeIdFromFsName(name)
 		return volId, nil
 
 	default:
 		return "", status.Errorf(codes.InvalidArgument, "Unsupported VolumeType in CreateVolumeRequest")
 	}
+}
+
+func createSnapshotIdFromRequest(req *csi.CreateSnapshotRequest) (string, error) {
+	name := req.GetName()
+	sourceVolId := req.GetSourceVolumeId()
+	sourceVol, err := NewVolume(sourceVolId, nil, nil, nil)
+	if err != nil {
+		return "", status.Error(codes.InvalidArgument, err.Error())
+	}
+	switch sourceVol.GetType() {
+	case "":
+		return "", status.Errorf(codes.InvalidArgument, "missing sourceVolumeType in CreateVolumeRequest")
+	case VolumeTypeDirV1:
+		asciiPart := getAsciiPart(name, 64)
+		hash := getStringSha1(name)
+		snapName := asciiPart + "-" + hash
+		ret := string(VolumeTypeDirSnapV1) + "/" + sourceVol.getPartialId() + "/" + snapName
+		return ret, nil
+
+
+	case VolumeTypeFsV1:
+		asciiPart := getAsciiPart(name, 20)
+		hash := getStringSha1(name)[:11]
+		snapName := asciiPart + "-" + hash
+		return string(VolumeTypeFsSnapV1) + "/" + sourceVol.getPartialId() + "/" + snapName, nil
+
+	default:
+		return "", status.Errorf(codes.InvalidArgument, "Unsupported sourceVolumeType in CreateSnapshotRequest")
+	}
+}
+
+func getVolumeIdFromSnapshotId(snapshotId string) string {
+	var ret string
+	if strings.HasPrefix(snapshotId, string(VolumeTypeFsSnapV1)) {
+		s := strings.TrimPrefix(snapshotId, string(VolumeTypeFsSnapV1))[1:] // cut the volId
+		parts := strings.Split(s, "/")
+		ret = string(VolumeTypeFsV1) + "/" + strings.Join(parts[:len(parts)-1], "/")
+	}
+	if strings.HasPrefix(snapshotId, string(VolumeTypeDirSnapV1)) {
+		s := strings.TrimPrefix(snapshotId, string(VolumeTypeDirSnapV1))[1:]
+
+		parts := strings.Split(s, "/")
+		ret = string(VolumeTypeDirV1) + "/" + strings.Join(parts[:len(parts)-1], "/")
+	}
+	return ret
+}
+
+func getSnapNameFromSnapshotId(snapshotId string) string {
+	parts := strings.Split(snapshotId, "/")
+	return parts[len(parts)-1]
+}
+
+func calculateVolumeIdFromFsName(name string) string {
+	asciiPart := getAsciiPart(name, 20)
+	hash := getStringSha1(name)[0:11]
+	filesystemName := asciiPart + "-" + hash
+	volId := filepath.Join(string(VolumeTypeFsV1), filesystemName)
+	return volId
 }
 
 func getStringSha1(name string) string {
@@ -146,6 +206,17 @@ func validateVolumeId(volumeId string) error {
 		if re.MatchString(volumeId) {
 			return nil
 		}
+	case string(VolumeTypeDirSnapV1):
+		// VolID format is as following:
+		// "<VolType>/<WEKA_FS_NAME>/<FOLDER_NAME_SHA1_HASH>-<FOLDER_NAME_ASCII>/<SNAPSHOT_NAME_SHA1_HASH>"
+		// e.g.
+		// "dir/v1/default/63008f52b44ca664dfac8a64f0c17a28e1754213-my-awesome-folder"
+		// length limited to maxVolumeIdLength
+		r := VolumeTypeDirSnapV1 + "/[^/]*/.+/.+"
+		re := regexp.MustCompile(string(r))
+		if re.MatchString(volumeId) {
+			return nil
+		}
 	case string(VolumeTypeFsV1):
 		// VolID format is as following:
 		// "<VolType>/<WEKA_FS_NAME>
@@ -157,6 +228,17 @@ func validateVolumeId(volumeId string) error {
 		if re.MatchString(volumeId) {
 			return nil
 		}
+	case string(VolumeTypeFsSnapV1):
+		// VolID format is as following:
+		// "<VolType>/<WEKA_FS_NAME>/<WEKA_SNAP_NAME>
+		// e.g.
+		// "fssnap/v1/aaaa/snapaaaa-aifsda0fyd
+		// length limited to maxVolumeIdLength
+		r := VolumeTypeFsSnapV1 + "/[^/]+/.+"
+		re := regexp.MustCompile(string(r))
+		if re.MatchString(volumeId) {
+			return nil
+		}
 	}
 	return status.Errorf(codes.InvalidArgument, fmt.Sprintf("unsupported volumeID %s for type %s", volumeId, volumeType))
 }
@@ -164,7 +246,7 @@ func validateVolumeId(volumeId string) error {
 func updateXattrs(volPath string, attrs map[string][]byte) error {
 	for key, val := range attrs {
 		if err := xattr.Set(volPath, key, val); err != nil {
-			return status.Errorf(codes.Internal, "failed to update volume attribute %s: %s", key, val)
+			return status.Errorf(codes.Internal, "failed to update volume attribute %s: %s, %s", key, val, err.Error())
 		}
 	}
 	glog.V(3).Infof("Xattrs updated on volume: %v", volPath)
@@ -192,4 +274,18 @@ func pathIsDirectory(filename string) error {
 		return status.Errorf(codes.Internal, "volume path %s is not a valid directory", filename)
 	}
 	return nil
+}
+
+func time2Timestamp(t time.Time) *timestamp.Timestamp {
+	return &timestamp.Timestamp{
+		Seconds: t.Unix(),
+		Nanos: int32(t.Nanosecond()),
+	}
+}
+
+func Min(x, y int32) int32 {
+	if x > y {
+		return y
+	}
+	return x
 }

@@ -146,7 +146,18 @@ spec:
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
-
+        - name: csi-snapshotter
+          image: {{ required "csi snapshotter sidercar image." .Values.images.snapshottersidecar }}
+          args:
+            - "--v={{ .Values.logLevel | default 5 }}"
+            - "--csi-address=$(ADDRESS)"
+            - "--leader-election=false"
+          env:
+            - name: ADDRESS
+              value: unix:///csi/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
         - name: wekafs
           securityContext:
             privileged: true

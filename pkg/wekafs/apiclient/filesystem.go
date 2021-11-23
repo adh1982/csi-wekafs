@@ -2,17 +2,20 @@ package apiclient
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/golang/glog"
 	"github.com/google/uuid"
 	"k8s.io/helm/pkg/urlutil"
 	"strconv"
+	"time"
 )
 
 type FileSystem struct {
 	Id                   string    `json:"id"`
 	Name                 string    `json:"name"`
 	Uid                  uuid.UUID `json:"uid"`
-	IsRemoving           bool      `json:"is_removing"`
+	IsRemoving           bool      `json:"is_removing,omitempty"`
 	GroupId              string    `json:"group_id"`
 	IsCreating           bool      `json:"is_creating"`
 	FreeTotal            int64     `json:"free_total"`
@@ -29,11 +32,10 @@ type FileSystem struct {
 	AuthRequired         bool      `json:"auth_required"`
 	AvailableSsdMetadata int64     `json:"available_ssd_metadata"`
 	TotalCapacity        int64     `json:"total_budget"`
-	UsedSsd              int64     `json:"used_ssd"`
+	UsedSsd              int64     `json:"used_ssd_data"`
 	AvailableSsd         int64     `json:"available_ssd"`
 	FreeSsd              int64     `json:"free_ssd"`
 
-	MaxFiles       int64         `json:"max_files"`
 	ObsBuckets     []interface{} `json:"obs_buckets"`
 	ObjectStorages []interface{} `json:"object_storages"`
 }
@@ -46,7 +48,21 @@ func (a *ApiClient) GetFileSystemByUid(uid uuid.UUID, fs *FileSystem) error {
 	ret := &FileSystem{
 		Uid: uid,
 	}
-	return a.Get(ret.GetApiUrl(), nil, fs)
+	err := a.Get(ret.GetApiUrl(), nil, fs)
+	if err != nil {
+		switch t := err.(type) {
+		case ApiNotFoundError:
+			return ObjectNotFoundError
+		case ApiBadRequestError:
+			for _, c := range t.ApiResponse.ErrorCodes {
+				if c == "FilesystemDoesNotExistException" {
+					return ObjectNotFoundError
+				}
+			}
+		default: return err
+		}
+	}
+	return nil
 }
 
 // FindFileSystemsByFilter returns result set of 0-many objects matching filter
@@ -69,13 +85,13 @@ func (a *ApiClient) GetFileSystemByFilter(query *FileSystem) (*FileSystem, error
 	rs := &[]FileSystem{}
 	err := a.FindFileSystemsByFilter(query, rs)
 	if err != nil {
-		return nil, err
+		return &FileSystem{}, err
 	}
 	if *rs == nil || len(*rs) == 0 {
-		return nil, ObjectNotFoundError
+		return &FileSystem{}, ObjectNotFoundError
 	}
 	if len(*rs) > 1 {
-		return nil, MultipleObjectsFoundError
+		return &FileSystem{}, MultipleObjectsFoundError
 	}
 	result := &(*rs)[0]
 	return result, nil
@@ -101,7 +117,18 @@ func (a *ApiClient) CreateFileSystem(r *FileSystemCreateRequest, fs *FileSystem)
 	if err != nil {
 		return err
 	}
-	return nil
+	for start := time.Now(); time.Since(start) < time.Second*30; {
+		fs, err = a.GetFileSystemByName(r.Name)
+		if err != nil {
+			continue
+		}
+		if fs.IsReady {
+			glog.Infoln("Filesystem", fs.Name, "is ready after", time.Since(start).String())
+			return nil
+		}
+		time.Sleep(time.Second)
+	}
+	return errors.New("Failed to create a file system after 30 seconds")
 }
 
 func (a *ApiClient) UpdateFileSystem(r *FileSystemResizeRequest, fs *FileSystem) error {
@@ -123,7 +150,7 @@ func (a *ApiClient) UpdateFileSystem(r *FileSystemResizeRequest, fs *FileSystem)
 }
 
 func (a *ApiClient) DeleteFileSystem(r *FileSystemDeleteRequest) error {
-	f := a.Log(3, "Deleting filesystem", r)
+	f := a.Log(3, "Deleting filesystem", r.Uid)
 	defer f()
 	if !r.hasRequiredFields() {
 		return RequestMissingParams
@@ -131,7 +158,16 @@ func (a *ApiClient) DeleteFileSystem(r *FileSystemDeleteRequest) error {
 	apiResponse := &ApiResponse{}
 	err := a.Delete(r.getApiUrl(), nil, nil, apiResponse)
 	if err != nil {
-		return err
+		switch t := err.(type) {
+		case ApiNotFoundError:
+			return ObjectNotFoundError
+		case ApiBadRequestError:
+			for _, c := range t.ApiResponse.ErrorCodes {
+				if c == "FilesystemDoesNotExistException" {
+					return ObjectNotFoundError
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -157,6 +193,8 @@ func (fs *FileSystem) getImmutableFields() []string {
 		"Name",
 		"TotalCapacity",
 		"GroupName",
+		"Id",
+		//"Uid",
 	}
 }
 

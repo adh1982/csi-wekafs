@@ -2,6 +2,7 @@ package wekafs
 
 import (
 	"errors"
+	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/golang/glog"
 	"github.com/wekafs/csi-wekafs/pkg/wekafs/apiclient"
 )
@@ -19,6 +20,8 @@ type Volume interface {
 	getMaxCapacity() (int64, error)
 	Create(capacity int64, params *map[string]string) error
 	Delete() error
+	CreateSnapshot(name string, snapId string, params map[string]string) (Snapshot, error)
+	getPartialId() string
 }
 
 func NewVolume(volumeId string, apiClient *apiclient.ApiClient, mounter *wekaMounter, gc *dirVolumeGc) (Volume, error) {
@@ -27,7 +30,7 @@ func NewVolume(volumeId string, apiClient *apiclient.ApiClient, mounter *wekaMou
 		return &DirVolume{}, err
 	}
 	if apiClient != nil {
-		glog.V(5).Infof("Successfully bound volume to backend API %s@%s", apiClient.Username, apiClient.ClusterName)
+		glog.V(5).Infoln("Successfully bound volume to backend API", apiClient.Credentials)
 	} else {
 		glog.V(5).Infof("Volume was not bound to any backend API client")
 	}
@@ -58,4 +61,19 @@ func NewVolume(volumeId string, apiClient *apiclient.ApiClient, mounter *wekaMou
 	default:
 		return nil, errors.New("unsupported volume type requested")
 	}
+}
+
+type Snapshot interface {
+	GetName() string
+	GetType() VolumeType
+	GetId() string
+	getFullPath() string
+	Mount(xattr bool) (error, UnmountFunc)
+	Unmount(xattr bool) error
+	Exists() (bool, error)
+	Create(name string, params *map[string]string) error
+	Delete() error
+	getSourceVolumeId() string
+	getCsiSnapshot() *csi.Snapshot
+	RefreshApiClient(client *apiclient.ApiClient)
 }

@@ -1,0 +1,3 @@
+filesystemGroupName: default
+ssdCapacityPercent: "100"
+volumeType: fs/v1

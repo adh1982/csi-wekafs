@@ -3,11 +3,15 @@ package wekafs
 import (
 	"errors"
 	"fmt"
+	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/golang/glog"
+	"github.com/google/uuid"
 	"github.com/wekafs/csi-wekafs/pkg/wekafs/apiclient"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"strconv"
+	"strings"
+	"time"
 )
 
 type FsVolume struct {
@@ -59,10 +63,10 @@ func (v FsVolume) getObject() (*apiclient.FileSystem, error) {
 	fs, err := v.apiClient.GetFileSystemByName(v.Filesystem)
 	if err != nil {
 		if err == apiclient.ObjectNotFoundError {
-			return nil, nil // we know that volume doesn't exist
+			return &apiclient.FileSystem{}, nil // we know that volume doesn't exist
 		}
 		glog.Errorln("Failed to fetch fs object for volume ID", v.GetId(), "filesystem name:", v.Filesystem)
-		return nil, err
+		return &apiclient.FileSystem{}, err
 	}
 	return fs, nil
 }
@@ -132,6 +136,10 @@ func (v FsVolume) GetId() string {
 	return v.id
 }
 
+func (v FsVolume) getPartialId() string {
+	return strings.TrimPrefix(v.id, string(v.GetType()))[1:]
+}
+
 func (v FsVolume) isMounted(xattr bool) bool {
 	if v.mountPath[xattr] == "" {
 		return false
@@ -191,27 +199,26 @@ func (v FsVolume) Unmount(xattr bool) error {
 func (v FsVolume) Exists() (bool, error) {
 	glog.V(3).Infoln("Checking if volume", v.GetId(), "exists")
 	fs, err := v.getObject()
-	if err != nil {
-		return false, err
-	}
-	if fs == nil {
+	if err != nil || fs == nil || fs.Uid == uuid.Nil {
+		glog.V(3).Infoln("Volume", v.GetId(), "does not exist")
 		return false, nil
 	}
 
-	err, unmount := v.Mount(false)
-	defer unmount()
-	if err != nil {
-		return false, err
-	}
-	if !PathExists(v.getFullPath()) {
-		glog.Infof("Volume %s not found on filesystem %s", v.GetId(), v.Filesystem)
-		return false, nil
-	}
-	if err := pathIsDirectory(v.getFullPath()); err != nil {
-		glog.Errorf("Volume %s is unusable: path %s is a not a directory", v.GetId(), v.Filesystem)
-		return false, status.Error(codes.Internal, err.Error())
-	}
-	glog.Infof("Volume %s exists and accessible via %s", v.id, v.getFullPath())
+	//err, unmount := v.Mount(false)
+	//defer unmount()
+	//if err != nil {
+	//	return false, err
+	//}
+	//if !PathExists(v.getFullPath()) {
+	//	glog.Infof("Volume %s not found on filesystem %s", v.GetId(), v.Filesystem)
+	//	return false, nil
+	//}
+	//if err := pathIsDirectory(v.getFullPath()); err != nil {
+	//	glog.Errorf("Volume %s is unusable: path %s is a not a directory", v.GetId(), v.Filesystem)
+	//	return false, status.Error(codes.Internal, err.Error())
+	//}
+	//glog.Infof("Volume %s exists and accessible via %s", v.id, v.getFullPath())
+	glog.Infof("Volume %s exists", v.GetId())
 	return true, nil
 }
 
@@ -219,15 +226,16 @@ func (v FsVolume) Create(capacity int64, params *map[string]string) error {
 	if !v.apiClient.SupportsFilesystemAsVolume() {
 		return errors.New("volume of type Filesystem is not supported on current version of Weka cluster")
 	}
-
-	fs, err := v.getObject()
-	if err != nil {
-		return err
-	}
-	if fs != nil {
-		// return fs for idempotence // TODO: validate capacity or return error
-		return nil
-	}
+	//
+	//fs, err := v.getObject()
+	//if err != nil {
+	//	return err
+	//}
+	//if fs != nil && fs.Uid != uuid.Nil {
+	//	// return fs for idempotence // TODO: validate capacity or return error
+	//	return nil
+	//}
+	fs := &apiclient.FileSystem{}
 
 	glog.Infoln("Received the following request params:", createKeyValuePairs(*params))
 	if params == nil {
@@ -262,12 +270,12 @@ func (v FsVolume) Create(capacity int64, params *map[string]string) error {
 		AuthRequired:  false,
 		AllowNoKms:    false,
 	}
-	err = v.apiClient.CreateFileSystem(fsc, fs)
+	err := v.apiClient.CreateFileSystem(fsc, fs)
 	if err != nil {
 		glog.Errorln("Failed to create volume", v.GetId(), err)
 		return err
 	}
-	glog.V(3).Infof("Created volume %s in: %v", v.GetId(), v.Filesystem)
+	glog.V(3).Infof("Created volume %s, mapped to filesystem %v", v.GetId(), v.Filesystem)
 	return nil
 }
 
@@ -278,18 +286,115 @@ func (v FsVolume) Delete() error {
 		glog.Errorln("Failed to delete filesystem since FS object could not be fetched from API for filesystem", v.Filesystem)
 		return status.Errorf(codes.Internal, "Failed to delete filesystem %s", v.Filesystem)
 	}
-	if fs == nil {
+	if fs == nil || fs.Uid == uuid.Nil {
 		glog.Errorln("Apparently filesystem not exists, returning OK", v.Filesystem)
 		// FS doesn't exist already, return OK for idempotence
 		return nil
 	}
+	fsUid := fs.Uid
 	glog.Infoln("Attempting deletion of filesystem", v.Filesystem)
 	fsd := &apiclient.FileSystemDeleteRequest{Uid: fs.Uid}
 	err = v.apiClient.DeleteFileSystem(fsd)
 	if err != nil {
-		glog.Errorln("Failed to delete filesystem via API", v.Filesystem)
+		if err == apiclient.ObjectNotFoundError {
+			glog.Errorln("Filesystem not found, assuming repeating delete request")
+			return nil
+		}
+		glog.Errorln("Failed to delete filesystem via API", v.Filesystem, err)
 		return status.Errorf(codes.Internal, "Failed to delete filesystem %s: %s", v.Filesystem, err)
 	}
+	glog.V(6).Infoln("Polling filesystem to ensure it is deleted")
+	for start := time.Now(); time.Since(start) < time.Second * 30; {
+		fs := &apiclient.FileSystem{}
+		err := v.apiClient.GetFileSystemByUid(fsUid, fs)
+		if err != nil {
+			if err == apiclient.ObjectNotFoundError {
+				glog.Info("Volume was removed successfully")
+				return nil
+			}
+			return err
+		}
+		if fs.Uid != uuid.Nil {
+			if fs.IsRemoving {
+				glog.V(5).Infoln("Filesystem is still removing")
+			} else {
+				return errors.New("Filesystem not marked for deletion but it should")
+			}
+		}
+		time.Sleep(time.Second)
+	}
+
 	glog.V(4).Infof("Deleted volume %s, mapped to filesystem %s", v.GetId(), v.Filesystem)
 	return nil
+}
+
+func (v FsVolume) CreateSnapshot(name string, snapId string, params map[string]string) (Snapshot, error) {
+	volObj, err := v.getObject()
+	if err != nil {
+		return nil, err
+	}
+	if volObj == nil {
+		return nil, errors.New("cannot create snapshot for volume, filesystem could not be found")
+	}
+
+	snap, err := v.apiClient.GetSnapshotByName(name)
+	if err == nil {
+		// idempotent, snapshot already exists
+		glog.V(5).Infoln("Snapshot already exists, checking source volume ID")
+		if volObj.Name == snap.Filesystem {
+			glog.V(5).Infoln("Snapshot", name, "of volume", v.GetId(), "already exists")
+			return &FsSnapshot{
+				Snapshot:  &csi.Snapshot{
+					SnapshotId:           snapId,
+					SourceVolumeId:       v.GetId(),
+					CreationTime:         time2Timestamp(snap.CreationTime),
+					ReadyToUse:           ! snap.IsRemoving,
+				},
+				name: name,
+				Uid:       &snap.Uid,
+				apiClient: v.apiClient,
+			}, nil
+		}
+		return &FsSnapshot{}, errors.New("already exists")
+	}
+
+	readOnly := false
+	if val, ok := params["readOnly"]; ok {
+		if val == "true" {
+			readOnly = true
+		} else {
+			readOnly = false
+		}
+	}
+
+	r := &apiclient.SnapshotCreateRequest{
+		FsUid:         volObj.Uid,
+		Name:          name,
+		AccessPoint:   name,
+		SourceSnapUid: nil,
+		IsWritable:    ! readOnly,
+	}
+
+	err = v.apiClient.CreateSnapshot(r, snap)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintln("Failed to create snapshot:", err))
+	}
+
+	ret := &FsSnapshot{
+		Snapshot:  &csi.Snapshot{
+			SizeBytes:            0,
+			SnapshotId:           snapId,
+			SourceVolumeId:       v.GetId(),
+			CreationTime:         time2Timestamp(snap.CreationTime),
+			ReadyToUse:           ! snap.IsRemoving,
+		},
+		name: name,
+		Uid:       &snap.Uid,
+		apiClient: v.apiClient,
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return ret, nil
 }

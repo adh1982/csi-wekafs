@@ -31,7 +31,7 @@ const (
 //ApiClient is a structure that defines Weka API client
 // client: http.Client ref
 // Username, Password - obvious
-// httpScheme: either 'http', 'https'
+// HttpScheme: either 'http', 'https'
 // Endpoints: slice of 'ip_address_or_fqdn:port' strings
 // apiToken, refreshToken, apiTokenExpiryDate used for bearer auth
 // currentEndpointId: refers to the currently working API endpoint
@@ -39,13 +39,9 @@ const (
 type ApiClient struct {
 	sync.Mutex
 	client                     *http.Client
+	Credentials Credentials
 	ClusterGuid                uuid.UUID
 	ClusterName                string
-	Username                   string
-	Password                   string
-	Organization               string
-	httpScheme                 string
-	Endpoints                  []string
 	MountEndpoints             []string
 	currentEndpointId          int
 	apiToken                   string
@@ -56,7 +52,7 @@ type ApiClient struct {
 	refreshTokenExpiryDate     time.Time
 	Timeout                    time.Duration
 	CompatibilityMap           *WekaCompatibilityMap
-	clientHash                 uint32
+	clientHash  uint32
 }
 
 type WekaCompatibilityRequiredVersions struct {
@@ -101,7 +97,7 @@ func (cm *WekaCompatibilityMap) fillIn(versionStr string) {
 	cm.QuotaOnNonEmptyDirs = v.GreaterThanOrEqual(n)
 }
 
-func NewApiClient(username, password, organization string, endpoints []string, scheme string) (*ApiClient, error) {
+func NewApiClient(credentials Credentials) (*ApiClient, error) {
 	a := &ApiClient{
 		Mutex: sync.Mutex{},
 		client: &http.Client{
@@ -111,16 +107,12 @@ func NewApiClient(username, password, organization string, endpoints []string, s
 			Timeout:       0,
 		},
 		ClusterGuid:       uuid.UUID{},
-		Username:          username,
-		Password:          password,
-		Organization:      organization,
-		httpScheme:        scheme,
-		Endpoints:         endpoints,
+		Credentials: credentials,
 		CompatibilityMap:  &WekaCompatibilityMap{},
 		Timeout:           time.Duration(ApiHttpTimeOutSeconds) * time.Second,
 		currentEndpointId: -1,
 	}
-	a.Log(3, "Creating new API client for endpoints", endpoints, "scheme:", scheme)
+	a.Log(3, "Creating new API client", a.Credentials)
 	a.clientHash = a.generateHash()
 	return a, nil
 }
@@ -147,7 +139,7 @@ func (a *ApiClient) fetchMountEndpoints() error {
 func (a *ApiClient) UpdateEndpoints(endpoints []string) {
 	a.Lock()
 	defer a.Unlock()
-	a.Endpoints = endpoints
+	a.Credentials.Endpoints = endpoints
 }
 
 // isLoggedIn returns true if client has a refresh token and it is not expired so it can refresh or perform ops directly
@@ -161,29 +153,31 @@ func (a *ApiClient) isLoggedIn() bool {
 	return true
 }
 
-//chooseRandomEndpoint returns a random endpoint of the configured ones
-func (a *ApiClient) chooseRandomEndpoint() {
-	if a.Endpoints == nil || len(a.Endpoints) == 0 {
+//rotateEndpoint returns a random endpoint of the configured ones
+func (a *ApiClient) rotateEndpoint() {
+	if a.Credentials.Endpoints == nil || len(a.Credentials.Endpoints) == 0 {
 		a.currentEndpointId = -1
 		a.Log(3, "Failed to choose random endpoint, no endpoints exist")
 		return
 	}
-	a.currentEndpointId = rand.Intn(len(a.Endpoints))
-	a.Log(4, "Choosing random endpoint", a.getEndpoint())
+	//a.currentEndpointId = rand.Intn(len(a.Credentials.Endpoints))
+	a.currentEndpointId = (a.currentEndpointId + 1) % len(a.Credentials.Endpoints)
+
+	a.Log(4, "Choosing endpoint", a.getEndpoint())
 }
 
 //getEndpoint returns last known endpoint to work against
 func (a *ApiClient) getEndpoint() string {
 	if a.currentEndpointId < 0 {
-		a.chooseRandomEndpoint()
+		a.rotateEndpoint()
 	}
-	return a.Endpoints[a.currentEndpointId]
+	return a.Credentials.Endpoints[a.currentEndpointId]
 }
 
 //getBaseUrl returns the full HTTP URL of the API endpoint including schema, chosen endpoint and API prefix
 func (a *ApiClient) getBaseUrl() string {
 	scheme := ""
-	switch strings.ToUpper(a.httpScheme) {
+	switch strings.ToUpper(a.Credentials.HttpScheme) {
 
 	case "HTTP":
 		scheme = "http"
@@ -198,7 +192,7 @@ func (a *ApiClient) getBaseUrl() string {
 // do Makes a basic API call to the client, returns an *ApiResponse that includes raw data, error message etc.
 func (a *ApiClient) do(Method string, Path string, Payload *[]byte, Query *map[string]string) (*ApiResponse, apiError) {
 	//construct URL path
-	if len(a.Endpoints) < 1 {
+	if len(a.Credentials.Endpoints) < 1 {
 		return &ApiResponse{}, &ApiNoEndpointsError{
 			Err: errors.New("no endpoints could be found for API client"),
 		}
@@ -300,7 +294,7 @@ func (a *ApiClient) do(Method string, Path string, Payload *[]byte, Query *map[s
 	case http.StatusNoContent: //203
 		return Response, nil
 	case http.StatusBadRequest: //400
-		return Response, &ApiBadRequestError{
+		return Response, ApiBadRequestError{
 			Err:         nil,
 			Text:        "Operation failed",
 			StatusCode:  response.StatusCode,
@@ -308,7 +302,7 @@ func (a *ApiClient) do(Method string, Path string, Payload *[]byte, Query *map[s
 			ApiResponse: Response,
 		}
 	case http.StatusUnauthorized: //401
-		return Response, &ApiAuthorizationError{
+		return Response, ApiAuthorizationError{
 			Err:         nil,
 			Text:        "Operation failed",
 			StatusCode:  response.StatusCode,
@@ -316,7 +310,7 @@ func (a *ApiClient) do(Method string, Path string, Payload *[]byte, Query *map[s
 			ApiResponse: Response,
 		}
 	case http.StatusNotFound: //404
-		return Response, &ApiNotFoundError{
+		return Response, ApiNotFoundError{
 			Err:         nil,
 			Text:        "Object not found",
 			StatusCode:  response.StatusCode,
@@ -324,7 +318,7 @@ func (a *ApiClient) do(Method string, Path string, Payload *[]byte, Query *map[s
 			ApiResponse: Response,
 		}
 	case http.StatusConflict: //409
-		return Response, &ApiConflictError{
+		return Response, ApiConflictError{
 			ApiError: ApiError{
 				Err:         nil,
 				Text:        "Object conflict",
@@ -345,7 +339,7 @@ func (a *ApiClient) do(Method string, Path string, Payload *[]byte, Query *map[s
 		}
 
 	default:
-		return Response, &ApiError{
+		return Response, ApiError{
 			Err:         err,
 			Text:        "General failure during API command",
 			StatusCode:  response.StatusCode,
@@ -385,15 +379,14 @@ func (a *ApiClient) handleNetworkErrors(err error) error {
 func (a *ApiClient) request(Method string, Path string, Payload *[]byte, Query *map[string]string, v interface{}) apiError {
 	f := a.Log(5, "Performing request:", Method, Path)
 	defer f()
-	err := retryBackoff(ApiRetryMaxCount, time.Second*time.Duration(ApiRetryIntervalSeconds), func() apiError {
+	err := a.retryBackoff(ApiRetryMaxCount, time.Second*time.Duration(ApiRetryIntervalSeconds), func() apiError {
 		rawResponse, reqErr := a.do(Method, Path, Payload, Query)
 		if a.handleNetworkErrors(reqErr) != nil { // transient network errors
 			a.Log(2, "Failed to perform request, error received:", reqErr.Error())
-			a.chooseRandomEndpoint()
+			a.rotateEndpoint()
 			return reqErr
 		}
 		if reqErr != nil {
-			a.Log(2, "requestError:", reqErr.Error())
 			return ApiNonrecoverableError{reqErr}
 		}
 		if rawResponse == nil {
@@ -485,9 +478,9 @@ func (a *ApiClient) Login() error {
 	defer f()
 
 	r := LoginRequest{
-		Username: a.Username,
-		Password: a.Password,
-		Org:      a.Organization,
+		Username: a.Credentials.Username,
+		Password: a.Credentials.Password,
+		Org:      a.Credentials.Organization,
 	}
 	jb, err := marshalRequest(r)
 	if err != nil {
@@ -513,9 +506,11 @@ func (a *ApiClient) Login() error {
 }
 
 func (a *ApiClient) Log(level glog.Level, message ...interface{}) func() {
-	glog.V(level).Infoln(fmt.Sprintf("API client: %s (%s)", a.ClusterName, a.ClusterGuid.String()), message)
+	//TODO: return as before unless find a way to suppress logs below certain level
+
+	glog.InfoDepth(1, fmt.Sprintf("API client: %s (%s)", a.ClusterName, a.ClusterGuid.String()), message)
 	return func() {
-		glog.V(level).Infoln(fmt.Sprintf("API client: %s (%s)", a.ClusterName, a.ClusterGuid.String()), message, "completed")
+		glog.InfoDepth(1, fmt.Sprintf("API client: %s (%s)", a.ClusterName, a.ClusterGuid.String()), message, "completed")
 	}
 }
 
@@ -523,7 +518,7 @@ func (a *ApiClient) Log(level glog.Level, message ...interface{}) func() {
 func (a *ApiClient) generateHash() uint32 {
 	a.Log(5, "Generating API hash")
 	h := fnv.New32a()
-	s := fmt.Sprintln(a.Username, a.Password, a.Organization, a.Endpoints)
+	s := fmt.Sprintln(a.Credentials.Username, a.Credentials.Password, a.Credentials.Organization, a.Credentials.Endpoints)
 	_, _ = h.Write([]byte(s))
 	return h.Sum32()
 }
@@ -583,22 +578,22 @@ func marshalRequest(r interface{}) (*[]byte, error) {
 }
 
 // retryBackoff performs operation and retries on transient failures. Does not retry on ApiNonrecoverableError
-func retryBackoff(attempts int, sleep time.Duration, f func() apiError) error {
+func (a *ApiClient) retryBackoff(attempts int, sleep time.Duration, f func() apiError) error {
 	maxAttempts := attempts
 	if err := f(); err != nil {
 		switch s := err.(type) {
 		case ApiNonrecoverableError:
-			glog.V(6).Infoln("Non-recoverable error occurred, stopping further attempts")
+			a.Log(3, "Non-recoverable error occurred, stopping further attempts")
 			// Return the original error for later checking
 			return s.apiError
 		}
 		if attempts--; attempts > 0 {
-			glog.V(3).Infof("Failed to perform API call, %d attempts left", attempts)
+			a.Log(3, "Failed to perform API call, %d attempts left", attempts)
 			// Add some randomness to prevent creating a Thundering Herd
 			jitter := time.Duration(rand.Int63n(int64(sleep)))
 			sleep = sleep + jitter/2
 			time.Sleep(sleep)
-			return retryBackoff(attempts, RetryBackoffExponentialFactor*sleep, f)
+			return a.retryBackoff(attempts, RetryBackoffExponentialFactor*sleep, f)
 		}
 		return &ApiRetriesExceeded{
 			ApiError: ApiError{
@@ -654,8 +649,9 @@ type ApiObjectRequest interface {
 	String() string
 }
 
-// ObjectsAreEqual returns true if both ApiObject have same immutable fields (other fields are disregarded)
+// ObjectsAreEqual returns true if both ApiObject have same immutable fields (other fields and nil fields are disregarded)
 func ObjectsAreEqual(o1 ApiObject, o2 ApiObject) bool {
+	//glog.V(6).Infoln("Comparing objects", o1, o2)
 	if reflect.TypeOf(o1) != reflect.TypeOf(o2) {
 		return false
 	}
@@ -670,6 +666,7 @@ func ObjectsAreEqual(o1 ApiObject, o2 ApiObject) bool {
 			}
 		}
 	}
+	//glog.V(6).Infoln("Objects", o1, o2, "are equal")
 	return true
 }
 
@@ -687,4 +684,17 @@ func ObjectRequestHasRequiredFields(o ApiObjectRequest) bool {
 		return false
 	}
 	return true
+}
+
+type Credentials struct {
+	Username     string
+	Password     string
+	Organization string
+	HttpScheme   string
+	Endpoints    []string
+}
+
+func (c *Credentials) String() string {
+	return fmt.Sprintf("%s@[%s]://%s@%s",
+		c.HttpScheme, c.Username, c.Organization, c.Endpoints)
 }

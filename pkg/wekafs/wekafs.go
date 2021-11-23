@@ -53,8 +53,8 @@ type wekaFsDriver struct {
 type VolumeType string
 
 var (
-	vendorVersion    = "dev"
-	ApiNotFoundError = errors.New("could not get API client by cluster guid")
+	vendorVersion           = "dev"
+	ClusterApiNotFoundError = errors.New("could not get API client by cluster guid")
 )
 
 // apiStore hashmap of all APIs defined by credentials + endpoints
@@ -85,37 +85,46 @@ func (api *apiStore) getByClusterGuid(guid uuid.UUID) (*apiclient.ApiClient, err
 		}
 	}
 	glog.Errorln("Could not fetch API client for cluster GUID", guid.String())
-	return nil, ApiNotFoundError
+	return nil, ClusterApiNotFoundError
 }
 
 // fromSecrets returns a pointer to API by secret contents
 func (api *apiStore) fromSecrets(secrets map[string]string) (*apiclient.ApiClient, error) {
-	username := strings.TrimSpace(secrets["username"])
-	password := secrets["password"]
-	organization := strings.TrimSpace(secrets["organization"])
 	endpointsRaw := strings.TrimSpace(secrets["endpoints"])
-	endpoints := strings.Split(string(endpointsRaw), ",")
-	scheme := strings.TrimSpace(secrets["scheme"])
-	return api.fromParams(username, password, organization, scheme, endpoints)
+	endpoints := func() []string {
+		var ret []string
+		for _, s := range strings.Split(string(endpointsRaw), ",") {
+			ret = append(ret, strings.TrimSpace(s))
+		}
+		return ret
+	}()
+	credentials := apiclient.Credentials{
+		Username:     strings.TrimSpace(secrets["username"]),
+		Password:     secrets["password"],
+		Organization: strings.TrimSpace(secrets["organization"]),
+		Endpoints:    endpoints,
+		HttpScheme:   strings.TrimSpace(secrets["scheme"]),
+	}
+	return api.fromCredentials(credentials)
 }
 
-// fromParams returns a pointer to API by credentials and endpoints
+// fromCredentials returns a pointer to API by credentials and endpoints
 // If this is a new API, it will be created and put in hashmap
-func (api *apiStore) fromParams(Username, Password, Organization, Scheme string, Endpoints []string) (*apiclient.ApiClient, error) {
+func (api *apiStore) fromCredentials(credentials apiclient.Credentials) (*apiclient.ApiClient, error) {
 	// doing this to fetch a client hash
-	newClient, err := apiclient.NewApiClient(Username, Password, Organization, Endpoints, Scheme)
+	newClient, err := apiclient.NewApiClient(credentials)
 	if err != nil {
 		return nil, errors.New("could not create API client object from supplied params")
 	}
 	hash := newClient.Hash()
 
 	if existingApi := api.getByHash(hash); existingApi != nil {
-		glog.V(4).Infoln("Found an existing Weka API client", newClient.Username, "@", strings.Join(newClient.Endpoints, ","))
+		glog.V(4).Infoln("Found an existing Weka API client", credentials.String())
 		return existingApi, nil
 	}
 	api.Lock()
 	defer api.Unlock()
-	glog.V(4).Infoln("Creating new Weka API client", newClient.Username, "@", strings.Join(newClient.Endpoints, ","))
+	glog.V(4).Infoln("Creating new Weka API client", credentials.String())
 	if api.getByHash(hash) != nil {
 		return api.getByHash(hash), nil
 	}
@@ -154,14 +163,19 @@ func (api *apiStore) GetClientFromSecrets(secrets map[string]string) (*apiclient
 			return nil, nil
 		}
 	}
-
+	credentials := apiclient.Credentials{
+		Username:     "",
+		Password:     "",
+		Organization: "",
+		Endpoints:    nil,
+	}
 	client, err := api.fromSecrets(secrets)
 	if err != nil || client == nil {
 		glog.V(4).Infof("API service was not found for request, switching to legacy mode")
 		return nil, nil
 	}
 	if err := client.Init(); err != nil {
-		glog.Errorln("Failed to initialize API client", client.Username, "@", client.Endpoints, err)
+		glog.Errorln("Failed to initialize API client", credentials.String(), err)
 		return nil, err
 	}
 	glog.V(4).Infof("Successfully initialized API backend for request")
@@ -248,17 +262,19 @@ func (driver *wekaFsDriver) Run() {
 	s.Wait()
 }
 
-const (
-	VolumeTypeDirV1  VolumeType = "dir/v1"
-	VolumeTypeFsV1   VolumeType = "fs/v1"
-	LegacySecretPath            = "/legacy-volume-access"
-)
-
 type CsiPluginMode string
 
-const CsiModeNode CsiPluginMode = "node"
-const CsiModeController CsiPluginMode = "controller"
-const CsiModeAll CsiPluginMode = "all"
+const (
+	VolumeTypeDirV1     VolumeType = "dir/v1"
+	VolumeTypeDirSnapV1 VolumeType = "dirsnap/v1"
+	VolumeTypeFsV1      VolumeType = "fs/v1"
+	VolumeTypeFsSnapV1  VolumeType = "fssnap/v1"
+	LegacySecretPath               = "/legacy-volume-access"
+
+	CsiModeNode       CsiPluginMode = "node"
+	CsiModeController CsiPluginMode = "controller"
+	CsiModeAll        CsiPluginMode = "all"
+)
 
 func GetCsiPluginMode(mode *string) CsiPluginMode {
 	ret := CsiPluginMode(*mode)

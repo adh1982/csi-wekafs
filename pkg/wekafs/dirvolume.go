@@ -3,6 +3,7 @@ package wekafs
 import (
 	"errors"
 	"fmt"
+	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/golang/glog"
 	"github.com/google/uuid"
 	"github.com/pkg/xattr"
@@ -12,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
+	"time"
 )
 
 type DirVolume struct {
@@ -24,6 +27,8 @@ type DirVolume struct {
 	mounter    *wekaMounter
 	gc         *dirVolumeGc
 	mountPath  map[bool]string
+	inodeId uint64
+	capacity int64
 }
 
 var ErrNoXattrOnVolume = errors.New("xattr not set on volume")
@@ -93,13 +98,36 @@ func (v DirVolume) GetCapacity() (int64, error) {
 	return int64(size), nil
 }
 
-func (v DirVolume) UpdateCapacity(capacityLimit int64, params *map[string]string) error {
-	glog.V(3).Infoln("Updating capacity of the volume", v.GetId(), "to", capacityLimit)
+func (v DirVolume) updateInfo() {
 	err, unmount := v.Mount(true)
 	defer unmount()
 	if err != nil {
-		return err
+		glog.Errorln("Failed to mount volume to update its info, volumeId:", v.GetId())
 	}
+	size, err := v.getSizeFromXattr()
+	if err != nil {
+		glog.Errorln("Failed to update volume capacity", v.GetId())
+		v.capacity = 0
+	}
+	v.capacity = int64(size)
+
+	glog.V(5).Infoln("Getting inode ID of volume", v.GetId(), "fullpath: ", v.getFullPath())
+	fileInfo, err := os.Stat(v.getFullPath())
+	if err != nil {
+		glog.Error(err)
+		v.inodeId = 0
+		return
+	}
+	stat, ok := fileInfo.Sys().(*syscall.Stat_t)
+	if !ok {
+		glog.Errorf("failed to obtain inodeId from %s", v.mountPath)
+	}
+	glog.V(5).Infoln("Inode ID of the volume", v.GetId(), "is", stat.Ino)
+	v.inodeId = stat.Ino
+}
+
+func (v DirVolume) UpdateCapacity(capacityLimit int64, params *map[string]string) error {
+	glog.V(3).Infoln("Updating capacity of the volume", v.GetId(), "to", capacityLimit)
 	var fallback = true
 	enforceCapacity, err := getStrictCapacityFromParams(*params)
 
@@ -189,11 +217,17 @@ func (v DirVolume) updateCapacityQuota(enforceCapacity *bool, capacityLimit int6
 }
 
 func (v DirVolume) updateCapacityXattr(enforceCapacity *bool, capacityLimit int64) error {
+	err, unmount := v.Mount(true)
+	defer unmount()
+	if err != nil {
+		glog.Errorf("Error mounting %s for update capacity %s", v.id, err)
+		return err
+	}
 	glog.V(4).Infoln("Updating xattrs on volume", v.GetId(), "to", capacityLimit, "enforce capacity:", *enforceCapacity)
 	if enforceCapacity != nil && *enforceCapacity {
 		glog.V(3).Infof("Legacy volume does not support enforce capacity")
 	}
-	err := setVolumeProperties(v.getFullPathXattr(), capacityLimit, v.dirName)
+	err = setVolumeProperties(v.getFullPathXattr(), capacityLimit, v.dirName)
 	if err != nil {
 		glog.Errorln("Failed to update xattrs on volume", v.GetId(), "capacity is not set")
 	}
@@ -269,6 +303,10 @@ func (v DirVolume) getInodeId() (uint64, error) {
 
 func (v DirVolume) GetId() string {
 	return v.id
+}
+
+func (v DirVolume) getPartialId() string {
+	return strings.TrimPrefix(v.id, string(v.GetType()))[1:]
 }
 
 func (v DirVolume) CreateQuotaFromMountPath(enforceCapacity *bool, capacityLimit uint64) (*apiclient.Quota, error) {
@@ -436,3 +474,20 @@ func (v DirVolume) Delete() error {
 	glog.V(2).Infof("Deleted volume %s in :%v", v.id, volPath)
 	return nil
 }
+
+func (v DirVolume) CreateSnapshot(name string, snapId string, params map[string]string) (Snapshot, error) {
+	// for CSI sanity only
+	return &DirSnapshot{
+		Snapshot:  &csi.Snapshot{
+			SizeBytes:            0,
+			SnapshotId:           snapId,
+			SourceVolumeId:       v.GetId(),
+			CreationTime:         time2Timestamp(time.Now()),
+			ReadyToUse:           true,
+		},
+		Uid:       nil,
+		apiClient: v.apiClient,
+		name: name,
+	}, nil
+}
+

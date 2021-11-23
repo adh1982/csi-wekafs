@@ -18,17 +18,17 @@ package wekafs
 
 import (
 	"fmt"
+	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/golang/glog"
 	"golang.org/x/net/context"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"k8s.io/utils/mount"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/container-storage-interface/spec/lib/go/csi"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	"k8s.io/utils/mount"
+	"time"
 )
 
 const TopologyKeyNode = "topology.wekafs.csi/node"
@@ -90,8 +90,8 @@ func NodePublishVolumeError(errorCode codes.Code, errorMessage string) (*csi.Nod
 
 //goland:noinspection GoUnusedParameter
 func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
-	glog.V(3).Infof("Received a NodePublishVolume request for volume ID %s", req.GetVolumeId())
-	defer glog.V(3).Infof("Completed processing NodePublishVolume request for volume ID %s", req.GetVolumeId())
+	glog.V(3).Infof(">>>> Received a NodePublishVolume request for volume ID %s", req.GetVolumeId())
+	defer glog.V(3).Infof("<<<< Completed processing NodePublishVolume request for volume ID %s", req.GetVolumeId())
 	client, err := ns.api.GetClientFromSecrets(req.Secrets)
 	if err != nil {
 		return NodePublishVolumeError(codes.Internal, fmt.Sprintln("Failed to initialize Weka API client for the request", err))
@@ -101,13 +101,17 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		return NodePublishVolumeError(codes.InvalidArgument, err.Error())
 	}
 
-	volExists, err := volume.Exists()
-	if err != nil {
-		return NodePublishVolumeError(codes.Internal, fmt.Sprintln("Failed to publish a volume as it could not be contacted"))
+	for start := time.Now(); time.Since(start) < time.Second*30; {
+		volExists, err := volume.Exists()
+		if err != nil || ! volExists {
+			glog.V(3).Infoln("Volume", volume.GetId(), "does not exist, retrying")
+			time.Sleep(time.Second)
+		} else {
+			break
+		}
+		return NodePublishVolumeError(codes.NotFound, fmt.Sprintln("Volume", volume.GetId(), "does not exist", err))
 	}
-	if !volExists {
-		return NodePublishVolumeError(codes.Internal, fmt.Sprintln("Failed to publish a volume that doesn't exist"))
-	}
+
 	// Check volume capabitily arguments
 	if req.GetVolumeCapability() == nil {
 		return NodePublishVolumeError(codes.InvalidArgument, "Volume capability missing in request")
@@ -147,24 +151,15 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	attrib := req.GetVolumeContext()
 	mountFlags := req.GetVolumeCapability().GetMount().GetMountFlags()
 
-	glog.V(4).Infof("target %v\nfstype %v\ndevice %v\nreadonly %v\nvolumeId %v\nattributes %v\nmountflags %v\n",
+	glog.V(4).Infof("Mount is going to be performed this way:\ntarget %v\nfstype %v\ndevice %v\nreadonly %v\nvolumeId %v\nattributes %v\nmountflags %v\n",
 		targetPath, fsType, deviceId, readOnly, volume.GetId(), attrib, mountFlags)
-
-	err, unmount := volume.Mount(false)
-	ok, err := volume.Exists()
-	if err != nil {
-		return NodePublishVolumeError(codes.Internal, err.Error())
-	}
-	if !ok {
-		unmount()
-		return NodePublishVolumeError(codes.NotFound, fmt.Sprintf("Volume %s was not found", volume.GetId()))
-	}
-	fullPath := volume.getFullPath()
-
 	glog.Infof("Ensuring target mount root directory exists: %s", filepath.Dir(targetPath))
 	if err = os.MkdirAll(filepath.Dir(targetPath), DefaultVolumePermissions); err != nil {
 		return NodePublishVolumeError(codes.Internal, err.Error())
 	}
+
+	err, unmount := volume.Mount(false)
+	fullPath := volume.getFullPath()
 
 	glog.Infof("Ensuring mount target directory exists: %s", targetPath)
 	if err = os.Mkdir(targetPath, 0750); err != nil {
@@ -217,10 +212,10 @@ func NodeUnpublishVolumeError(errorCode codes.Code, errorMessage string) (*csi.N
 
 //goland:noinspection GoUnusedParameter
 func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
-	glog.Infof("Received NodeUnpublishVolume request %s", req)
+	glog.V(3).Infof(">>>> Received a NodeUnpublishVolume request for volume ID %s", req.GetVolumeId())
+	defer glog.V(3).Infof("<<<< Completed processing NodeUnpublishVolume request for volume ID %s", req.GetVolumeId())
 	// Check arguments
-
-	volume, err := NewVolume(req.GetVolumeId(), nil, ns.mounter, nil)
+		volume, err := NewVolume(req.GetVolumeId(), nil, ns.mounter, nil)
 	if err != nil {
 		return &csi.NodeUnpublishVolumeResponse{}, err
 		//return NodeUnpublishVolumeError(codes.Internal, err.Error())
@@ -288,31 +283,32 @@ func NodeStageVolumeError(errorCode codes.Code, errorMessage string) (*csi.NodeS
 
 //goland:noinspection GoUnusedParameter
 func (ns *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
-	glog.V(3).Infof("Received a NodeStageVolume request for volume ID %s", req.GetVolumeId())
-	defer glog.V(3).Infof("Completed processing NodeStageVolume request for volume ID %s", req.GetVolumeId())
-	client, err := ns.api.GetClientFromSecrets(req.Secrets)
-	if err != nil {
-		return NodeStageVolumeError(codes.Internal, fmt.Sprintln("Failed to initialize Weka API client for the request", err))
-	}
-	volume, err := NewVolume(req.GetVolumeId(), client, ns.mounter, nil)
-	if err != nil {
-		return NodeStageVolumeError(codes.Internal, err.Error())
-	}
-	// Check arguments
-	if len(req.GetStagingTargetPath()) == 0 {
-		return NodeStageVolumeError(codes.InvalidArgument, "Target path missing in request")
-	}
-
-	if req.GetVolumeCapability() == nil {
-		return NodeStageVolumeError(codes.InvalidArgument, "Error occured, volume Capability missing in request")
-	}
-
-	if req.GetVolumeCapability().GetBlock() != nil {
-		return NodeStageVolumeError(codes.InvalidArgument, "Block accessType is unsupported")
-	}
-	glog.V(4).Infof("wekafs: volume %s has been staged.", volume.GetId())
-
-	return &csi.NodeStageVolumeResponse{}, nil
+//	glog.V(3).Infof(">>>> Received a NodeStageVolume request for volume ID %s", req.GetVolumeId())
+//	defer glog.V(3).Infof("<<<< Completed processing NodeStageVolume request for volume ID %s", req.GetVolumeId())
+//	client, err := ns.api.GetClientFromSecrets(req.Secrets)
+//	if err != nil {
+//		return NodeStageVolumeError(codes.Internal, fmt.Sprintln("Failed to initialize Weka API client for the request", err))
+//	}
+//	volume, err := NewVolume(req.GetVolumeId(), client, ns.mounter, nil)
+//	if err != nil {
+//		return NodeStageVolumeError(codes.Internal, err.Error())
+//	}
+//	// Check arguments
+//	if len(req.GetStagingTargetPath()) == 0 {
+//		return NodeStageVolumeError(codes.InvalidArgument, "Target path missing in request")
+//	}
+//
+//	if req.GetVolumeCapability() == nil {
+//		return NodeStageVolumeError(codes.InvalidArgument, "Error occured, volume Capability missing in request")
+//	}
+//
+//	if req.GetVolumeCapability().GetBlock() != nil {
+//		return NodeStageVolumeError(codes.InvalidArgument, "Block accessType is unsupported")
+//	}
+//	glog.V(4).Infof("wekafs: volume %s has been staged.", volume.GetId())
+//
+//	return &csi.NodeStageVolumeResponse{}, nil
+	panic("Implement me")
 }
 
 func NodeUnstageVolumeError(errorCode codes.Code, errorMessage string) (*csi.NodeUnstageVolumeResponse, error) {
@@ -323,18 +319,19 @@ func NodeUnstageVolumeError(errorCode codes.Code, errorMessage string) (*csi.Nod
 
 //goland:noinspection GoUnusedParameter
 func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
-
-	// Check arguments
-	volume, err := NewVolume(req.GetVolumeId(), nil, ns.mounter, nil)
-	if err != nil {
-		return NodeUnstageVolumeError(codes.Internal, err.Error())
-	}
-
-	if len(req.GetStagingTargetPath()) == 0 {
-		return NodeUnstageVolumeError(codes.InvalidArgument, "Target path missing in request")
-	}
-	glog.V(4).Infof("wekafs: volume %s has been unstaged.", volume.GetId())
-	return &csi.NodeUnstageVolumeResponse{}, nil
+	//
+	//// Check arguments
+	//volume, err := NewVolume(req.GetVolumeId(), nil, ns.mounter, nil)
+	//if err != nil {
+	//	return NodeUnstageVolumeError(codes.Internal, err.Error())
+	//}
+	//
+	//if len(req.GetStagingTargetPath()) == 0 {
+	//	return NodeUnstageVolumeError(codes.InvalidArgument, "Target path missing in request")
+	//}
+	//glog.V(4).Infof("wekafs: volume %s has been unstaged.", volume.GetId())
+	//return &csi.NodeUnstageVolumeResponse{}, nil
+	panic("Implement me")
 }
 
 //goland:noinspection GoUnusedParameter
